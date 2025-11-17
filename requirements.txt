@@ -1,0 +1,18 @@
+# Core Dependencies for Control Project
+python-dotenv>=1.0.0
+google-generativeai>=0.3.0
+
+# Computer Control Libraries
+pyautogui>=0.9.50
+keyboard>=0.13.0
+mouse>=0.7.0
+mss>=6.0.0
+
+# System Utilities  
+psutil>=5.9.0
+pyperclip>=1.8.0
+
+# Image Processing
+Pillow>=10.0.0
+
+# Note: asyncio, logging, pathlib, json, time, datetime are built-in modules

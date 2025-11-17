@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control AI Chat</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .glass-morphism {
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .message-bubble {
+            animation: slideInUp 0.3s ease-out;
+        }
+        
+        @keyframes slideInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .typing-indicator {
+            display: inline-flex;
+            gap: 4px;
+        }
+        
+        .typing-dot {
+            width: 8px;
+            height: 8px;
+            background: #3B82F6;
+            border-radius: 50%;
+            animation: typing 1.4s infinite;
+        }
+        
+        .typing-dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+        
+        .typing-dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+        
+        @keyframes typing {
+            0%, 60%, 100% {
+                transform: translateY(0);
+            }
+            30% {
+                transform: translateY(-10px);
+            }
+        }
+        
+        .resize-handle {
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            width: 20px;
+            height: 20px;
+            cursor: nwse-resize;
+            background: linear-gradient(135deg, transparent 50%, rgba(255,255,255,0.3) 50%);
+        }
+        
+        .drag-region {
+            -webkit-app-region: drag;
+        }
+        
+        .no-drag {
+            -webkit-app-region: no-drag;
+        }
+        
+        /* Custom scrollbar */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+        }
+        
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 3px;
+        }
+        
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.5);
+        }
+    </style>
+<script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
+</head>
+<body class="bg-transparent text-white overflow-hidden">
+    <!-- Main Container -->
+    <div class="h-screen flex flex-col glass-morphism rounded-lg shadow-2xl">
+        <!-- Header with Drag Region -->
+        <div class="drag-region px-4 py-3 border-b border-white/10 flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+                <div class="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                <h2 class="text-sm font-medium">Control AI</h2>
+            </div>
+            <!-- <div class="no-drag flex items-center space-x-1">
+                <button onclick="minimizeWindow()" class="p-1 hover:bg-white/10 rounded transition-colors">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path>
+                    </svg>
+                </button>
+                <button onclick="closeWindow()" class="p-1 hover:bg-white/10 rounded transition-colors">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button> -->
+            </div>
+        </div>
+
+        
+        <div id="messagesContainer" class="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+       
+            <div class="message-bubble">
+                <div class="flex items-start space-x-2">
+                    <div class="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                        </svg>
+                    </div>
+                    <div class="bg-white/10 rounded-lg p-3 max-w-xs">
+                        <p class="text-sm">Hello! I'm Control AI. How can I help you with your computer today?</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        
+        <div class="border-t border-white/10 p-3">
+          
+            <div id="actionStatus" class="mb-2 text-xs text-blue-300 hidden">
+                <div class="flex items-center space-x-2">
+                    <div class="typing-indicator">
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                    </div>
+                    <span id="statusText">Working...</span>
+                </div>
+            </div>
+            
+            <!-- Input Controls -->
+            <div class="flex items-center space-x-2">
+                <button onclick="toggleVoiceInput()" id="voiceButton" class="p-2 hover:bg-white/10 rounded-full transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path>
+                    </svg>
+                </button>
+                
+                <button onclick="attachFile()" class="p-2 hover:bg-white/10 rounded-full transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path>
+                    </svg>
+                </button>
+                
+                <input 
+                    type="text" 
+                    id="messageInput" 
+                    placeholder="Type your message..."
+                    class="flex-1 bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-sm placeholder-white/50 focus:outline-none focus:border-blue-400 transition-colors"
+                    onkeypress="handleKeyPress(event)"
+                >
+                
+                <button onclick="sendMessage()" class="p-2 bg-blue-500 hover:bg-blue-600 rounded-full transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Resize Handle -->
+        <div class="resize-handle"></div>
+    </div>
+
+    <script>
+        let isRecording = false;
+        let conversationHistory = [];
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            setupEventListeners();
+            focusInput();
+        });
+
+        function setupEventListeners() {
+            // Listen for backend messages
+            if (window.electronAPI) {
+                window.electronAPI.onBackendMessage((message) => {
+                    handleBackendMessage(message);
+                });
+            }
+        }
+
+        function focusInput() {
+            document.getElementById('messageInput').focus();
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+            }
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+            
+            if (!message) return;
+
+            // Add user message to UI
+            addMessage(message, 'user');
+            conversationHistory.push({ role: 'user', content: message });
+            
+            // Clear input
+            input.value = '';
+            
+            // Show typing indicator
+            showActionStatus('Processing...');
+            
+            try {
+                // Send to backend
+                const result = await window.electronAPI.sendToBackend(message);
+                
+                if (!result.success) {
+                    throw new Error(result.error || 'Failed to send message');
+                }
+                
+            } catch (error) {
+                hideActionStatus();
+                addMessage(`Error: ${error.message}`, 'assistant', true);
+            }
+        }
+
+        function handleBackendMessage(message) {
+            try {
+                // Try to parse as JSON first
+                let parsedMessage;
+                try {
+                    parsedMessage = typeof message === 'string' ? JSON.parse(message) : message;
+                } catch {
+                    // If not JSON, treat as plain text
+                    addMessage(message, 'assistant');
+                    hideActionStatus();
+                    return;
+                }
+
+                // Handle structured message
+                if (parsedMessage.response) {
+                    addMessage(parsedMessage.response, 'assistant');
+                }
+                
+                if (parsedMessage.action_log) {
+                    showActionStatus(parsedMessage.action_log);
+                }
+                
+                if (parsedMessage.status === 'complete' || parsedMessage.status === 'success') {
+                    setTimeout(hideActionStatus, 2000);
+                }
+                
+                if (parsedMessage.status === 'error') {
+                    hideActionStatus();
+                    addMessage(`Error: ${parsedMessage.response}`, 'assistant', true);
+                }
+                
+            } catch (error) {
+                console.error('Error handling backend message:', error);
+                addMessage('Received a message but couldn\'t process it.', 'assistant', true);
+                hideActionStatus();
+            }
+        }
+
+        function addMessage(content, sender, isError = false) {
+            const container = document.getElementById('messagesContainer');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message-bubble';
+            
+            const isUser = sender === 'user';
+            
+            messageDiv.innerHTML = `
+                <div class="flex items-start space-x-2 ${isUser ? 'flex-row-reverse space-x-reverse' : ''}">
+                    <div class="w-8 h-8 ${isUser ? 'bg-green-500' : isError ? 'bg-red-500' : 'bg-blue-500'} rounded-full flex items-center justify-center flex-shrink-0">
+                        ${isUser ? 
+                            '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>' :
+                            isError ?
+                            '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>' :
+                            '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>'
+                        }
+                    </div>
+                    <div class="${isUser ? 'bg-blue-500' : 'bg-white/10'} rounded-lg p-3 max-w-xs">
+                        <p class="text-sm whitespace-pre-wrap">${content}</p>
+                    </div>
+                </div>
+            `;
+            
+            container.appendChild(messageDiv);
+            container.scrollTop = container.scrollHeight;
+            
+            conversationHistory.push({ role: sender, content });
+        }
+
+        function showActionStatus(text) {
+            const statusDiv = document.getElementById('actionStatus');
+            const statusText = document.getElementById('statusText');
+            
+            statusText.textContent = text;
+            statusDiv.classList.remove('hidden');
+        }
+
+        function hideActionStatus() {
+            const statusDiv = document.getElementById('actionStatus');
+            statusDiv.classList.add('hidden');
+        }
+
+        async function toggleVoiceInput() {
+            const voiceButton = document.getElementById('voiceButton');
+            
+            if (isRecording) {
+                // Stop recording
+                try {
+                    await window.electronAPI.stopAudioRecording();
+                    isRecording = false;
+                    voiceButton.classList.remove('bg-red-500');
+                    voiceButton.classList.add('hover:bg-white/10');
+                    showActionStatus('Processing speech...');
+                    
+                    // Here you would send the audio for transcription
+                    // For now, just add a placeholder message
+                    setTimeout(() => {
+                        hideActionStatus();
+                        addMessage('Voice input recorded. Processing...', 'assistant');
+                    }, 1000);
+                    
+                } catch (error) {
+                    console.error('Error stopping recording:', error);
+                }
+            } else {
+                // Start recording
+                try {
+                    await window.electronAPI.startAudioRecording();
+                    isRecording = true;
+                    voiceButton.classList.add('bg-red-500');
+                    voiceButton.classList.remove('hover:bg-white/10');
+                    showActionStatus('Recording...');
+                } catch (error) {
+                    console.error('Error starting recording:', error);
+                    addMessage('Failed to start voice recording. Please check microphone permissions.', 'assistant', true);
+                }
+            }
+        }
+
+        function attachFile() {
+            // For now, just add a placeholder message
+            addMessage('File attachment feature coming soon!', 'assistant');
+        }
+
+        function closeWindow() {
+            if (window.electronAPI) {
+                window.electronAPI.closeWindow('chat');
+            }
+        }
+
+        function minimizeWindow() {
+            if (window.electronAPI) {
+                window.electronAPI.minimizeWindow('chat');
+            }
+        }
+
+        // Window resizing
+        let isResizing = false;
+        let startX, startY, startWidth, startHeight;
+
+        document.querySelector('.resize-handle').addEventListener('mousedown', (e) => {
+            isResizing = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            
+            const rect = document.body.getBoundingClientRect();
+            startWidth = rect.width;
+            startHeight = rect.height;
+            
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            
+            const newWidth = startWidth + (e.clientX - startX);
+            const newHeight = startHeight + (e.clientY - startY);
+            
+            // Apply minimum size constraints
+            if (newWidth >= 300 && newHeight >= 400) {
+                // This would need to be handled by the main process in a real app
+                document.body.style.width = newWidth + 'px';
+                document.body.style.height = newHeight + 'px';
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            isResizing = false;
+        });
+    </script>
+</body>
+</html>
