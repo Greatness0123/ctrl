@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Console Test Backend - Control Project
-A console-based replica of the main.py for testing LLM communication and screenshot functionality.
-This version includes console logging and user input to test the complete workflow.
+Enhanced AI agent with precise task execution, error recovery, and adaptive planning
 """
 
 import sys
@@ -12,158 +11,174 @@ import asyncio
 import logging
 import os
 import subprocess
+import re
 from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import datetime
 
-# Add project root to path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
+from dotenv import load_dotenv
+
 try:
-    # Skip GUI libraries in headless environment
     GUI_AVAILABLE = False
     
-    # Core libraries that should work in any environment
     import mss
-    import psutil
     try:
         import pyperclip
     except ImportError:
         pyperclip = None
     from PIL import Image
     import google.generativeai as genai
-    from dotenv import load_dotenv
+    
+    try:
+        import pyautogui
+        GUI_AVAILABLE = True
+    except ImportError:
+        pyautogui = None
+        GUI_AVAILABLE = False
+    
 except ImportError as e:
     print(f"Missing dependency: {e}", file=sys.stderr)
     print("Please run: pip install -r requirements.txt", file=sys.stderr)
     sys.exit(1)
 
-# Load environment variables
 load_dotenv()
 
-# Configure logging with console formatting
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - [CONSOLE_TEST] - %(message)s',
+    format='%(asctime)s - %(levelname)s - [CONTROL] - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler('console_test.log')
+        logging.FileHandler('control.log')
     ]
 )
 logger = logging.getLogger(__name__)
 
-# System prompt for the AI
-SYSTEM_PROMPT = """You are Control, an advanced Computer Use Agent with the ability to both answer questions and perform actions on the user's device.
+SYSTEM_PROMPT = """You are Control, an intelligent AI assistant that can:
+1. ANSWER QUESTIONS: Respond to queries, provide information, explanations
+2. EXECUTE TASKS: Control computer - click, type, open apps, manipulate files
 
-**CRITICAL: You must respond in valid JSON format ONLY. No additional text before or after the JSON.**
+**DETERMINE REQUEST TYPE:**
+- QUESTION: "What is X?", "How do I?", "Explain", "Tell me about", "Why is", "Information requests"
+  → Respond naturally with information/explanation
+- TASK: "Open X", "Create Y", "Send message", "Move file", "Click button", "Action requests"
+  → Execute computer actions
 
-**Response Format:**
+**FOR QUESTIONS - RESPOND WITH:**
 {
-  "action_log": "Description of what you're doing",
-  "status": "loading|success|error|complete",
-  "response": "Your text response to the user",
-  "computer_use": {
-    "type": "screenshot|click|type|scroll|wait",
-    "coordinates": [x, y] (for click),
-    "text": "text to type" (for type),
-    "amount": pixels (for scroll),
-    "duration": seconds (for wait)
-  }
+  "type": "question",
+  "response": "Your detailed answer to the user",
+  "requires_action": false
 }
 
-**Computer Control Capabilities:**
-- Take screenshots to see the screen
-- Click at specific coordinates  
-- Type text using keyboard
-- Scroll the mouse wheel
-- Wait for specified durations
+**FOR TASKS - RESPOND WITH:**
+{
+  "type": "task",
+  "analysis": "Brief analysis of current state and optimal approach",
+  "plan": "Concise step-by-step plan",
+  "actions": [
+    {
+      "step": 1,
+      "description": "Brief description",
+      "action": "screenshot|click|type|key_press|double_click|mouse_move|scroll|terminal|wait|focus_window",
+      "parameters": {}
+    }
+  ]
+}
 
-**Guidelines:**
-- Always describe what you're doing in the action_log
-- Start with status="loading" when beginning an action
-- Update to status="success" or "error" after completion
-- Use status="complete" when finished with the request
-- Take screenshots before performing actions when needed
-- Be precise with coordinates and actions
-- Explain your reasoning for actions taken"""
+**TASK PRINCIPLES:**
+- System Tasks (OS level): Use terminal for opening apps, file operations, folder manipulation, system commands
+- Application Tasks: Simulate real user - click, type, shortcuts - ALWAYS ensure correct app window is in focus first
+- Always click text fields before typing to ensure focus
+- Use native app shortcuts when possible
+- Be concise and efficient - avoid unnecessary steps
+- If a method fails, try alternative approaches
+
+**ACTIONS:**
+1. screenshot - Capture screen. params: {}
+2. click - Single click. params: {"coordinates": [x, y]}
+3. double_click - Double click. params: {"coordinates": [x, y]}
+4. mouse_move - Move cursor. params: {"coordinates": [x, y]}
+5. scroll - Scroll wheel. params: {"coordinates": [x, y], "direction": "up|down", "amount": 3}
+6. type - Type text. params: {"text": "hello", "clear_first": false}
+7. key_press - Keys/shortcuts. params: {"keys": ["ctrl", "a"], "combo": true}
+8. terminal - OS command. params: {"command": "command"}
+9. wait - Pause. params: {"duration": 1}
+10. focus_window - Switch to app window. params: {"app_name": "Chrome", "method": "alt_tab|search"}
+
+**RULES:**
+- First determine if request is a QUESTION or TASK
+- For questions: Provide natural, helpful response
+- For tasks: Use terminal for system operations, UI interaction for applications
+- System tasks: Use terminal commands (fastest, most reliable)
+- App interactions: ALWAYS screenshot first to see current state
+- Before app interaction: Check window focus, switch if needed using focus_window action
+- ALWAYS click text fields before typing
+- Use keyboard shortcuts for efficiency
+- If action fails: Try alternative method
+- Speed and precision are both important"""
 
 class ConsoleTestBackend:
-    """Console-based backend for testing LLM communication and computer control."""
     
     def __init__(self):
-        """Initialize the console test backend."""
         self.running = True
         self.screenshot_dir = project_root / "screenshots"
         self.screenshot_dir.mkdir(exist_ok=True)
+        self.execution_history = []
         
-        # Configure Gemini API
         self.setup_gemini_api()
-        
-        # Computer control setup
         self.setup_computer_control()
         
-        logger.info("Console Test Backend initialized successfully")
-        logger.info("Screenshot directory: %s", self.screenshot_dir)
-        logger.info("Gemini API configured and ready")
+        logger.info("Control Backend initialized successfully")
     
     def setup_gemini_api(self):
-        """Configure Gemini API with appropriate key based on plan."""
-        # For testing, use the free key
         api_key = os.getenv('GEMINI_FREE_KEY')
         if not api_key:
-            # Fallback to a test key if environment not set
             api_key = "test_api_key"
-            logger.warning("No Gemini API key found in environment. Using test key.")
+            logger.warning("No API key found")
         
         try:
             genai.configure(api_key=api_key)
             self.model = genai.GenerativeModel('gemini-2.0-flash', 
                                              system_instruction=SYSTEM_PROMPT)
-            logger.info("Gemini API configured successfully")
+            print("[API] Ready\n")
+            logger.info("API configured")
         except Exception as e:
-            logger.error(f"Failed to configure Gemini API: {e}")
+            print(f"[API] ERROR: {e}\n")
             self.model = None
     
     def setup_computer_control(self):
-        """Setup computer control libraries."""
         try:
-            if GUI_AVAILABLE:
-                # Configure pyautogui for safety
+            if GUI_AVAILABLE and pyautogui:
                 pyautogui.FAILSAFE = True
-                pyautogui.PAUSE = 0.1
-                logger.info("GUI control libraries available")
-            else:
-                logger.info("GUI control libraries not available - headless mode")
+                pyautogui.PAUSE = 0.05
+                print("[CONTROL] GUI libraries ready\n")
             
-            # Test mss for screenshots (should work in headless)
             try:
                 with mss.mss() as sct:
                     monitors = sct.monitors
-                    logger.info(f"Found {len(monitors)-1} monitor(s) for screenshots")
-                logger.info("Screenshot functionality available")
+                    print(f"[CONTROL] {len(monitors)-1} monitor(s) detected\n")
             except Exception as e:
-                logger.warning(f"Screenshot not available: {e}")
-            
-            logger.info("Computer control setup completed")
+                print(f"[CONTROL] WARNING: {e}\n")
         except Exception as e:
-            logger.error(f"Failed to setup computer control: {e}")
+            print(f"[CONTROL] ERROR: {e}\n")
     
-    def take_screenshot(self, filename: Optional[str] = None) -> str:
-        """Take a screenshot using mss library."""
+    def take_screenshot(self) -> str:
         try:
-            if filename is None:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"screenshot_{timestamp}.png"
-            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"screenshot_{timestamp}.png"
             filepath = self.screenshot_dir / filename
             
             with mss.mss() as sct:
-                # Capture primary monitor
-                monitor = sct.monitors[1]  # Primary monitor
+                monitor = sct.monitors[1]
                 sct_img = sct.grab(monitor)
-                
-                # Save to PIL Image
                 img = Image.frombytes("RGB", sct_img.size, sct_img.rgb)
                 img.save(filepath)
             
@@ -171,243 +186,393 @@ class ConsoleTestBackend:
             return str(filepath)
         
         except Exception as e:
-            logger.error(f"Failed to take screenshot: {e}")
-            # In headless environment, create a dummy screenshot
-            try:
-                # Create a simple test image
-                dummy_img = Image.new('RGB', (800, 600), color = 'lightblue')
-                dummy_img.save(filepath)
-                logger.info(f"Created dummy screenshot: {filepath}")
-                return str(filepath)
-            except Exception as dummy_e:
-                logger.error(f"Failed to create dummy screenshot: {dummy_e}")
-                return ""
+            logger.error(f"Screenshot error: {e}")
+            return ""
     
-    def execute_computer_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute computer control actions."""
-        result = {"success": False, "message": ""}
+    def execute_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        result = {"success": False, "message": "", "action": action.get('action')}
         
         try:
-            action_type = action.get("type", "").lower()
+            action_type = action.get('action', '').lower()
+            params = action.get('parameters', {})
             
-            if action_type == "screenshot":
+            if action_type == 'screenshot':
                 filepath = self.take_screenshot()
                 result["success"] = bool(filepath)
-                result["message"] = f"Screenshot saved to {filepath}" if filepath else "Failed to save screenshot"
+                result["message"] = filepath
+                print(f"[SCREENSHOT] Captured\n")
             
-            elif action_type == "click":
-                if GUI_AVAILABLE:
-                    x, y = action.get("coordinates", [0, 0])
+            elif action_type == 'click':
+                if GUI_AVAILABLE and pyautogui:
+                    x, y = params.get('coordinates', [0, 0])
                     pyautogui.click(x, y)
                     result["success"] = True
-                    result["message"] = f"Clicked at coordinates ({x}, {y})"
-                else:
-                    result["success"] = False
-                    result["message"] = "GUI control not available in headless mode"
+                    result["message"] = f"Clicked ({x}, {y})"
+                    print(f"[CLICK] ({x}, {y})\n")
             
-            elif action_type == "type":
-                if GUI_AVAILABLE:
-                    text = action.get("text", "")
-                    pyautogui.typewrite(text)
+            elif action_type == 'double_click':
+                if GUI_AVAILABLE and pyautogui:
+                    x, y = params.get('coordinates', [0, 0])
+                    pyautogui.click(x, y, clicks=2)
                     result["success"] = True
-                    result["message"] = f"Typed: {text}"
-                else:
-                    result["success"] = False
-                    result["message"] = "GUI control not available in headless mode"
+                    result["message"] = f"Double-clicked ({x}, {y})"
+                    print(f"[DOUBLE_CLICK] ({x}, {y})\n")
             
-            elif action_type == "scroll":
-                if GUI_AVAILABLE:
-                    amount = action.get("amount", 0)
-                    pyautogui.scroll(amount)
+            elif action_type == 'mouse_move':
+                if GUI_AVAILABLE and pyautogui:
+                    x, y = params.get('coordinates', [0, 0])
+                    pyautogui.moveTo(x, y)
                     result["success"] = True
-                    result["message"] = f"Scrolled {amount} pixels"
-                else:
-                    result["success"] = False
-                    result["message"] = "GUI control not available in headless mode"
+                    result["message"] = f"Moved to ({x}, {y})"
+                    print(f"[MOUSE_MOVE] ({x}, {y})\n")
             
-            elif action_type == "wait":
-                duration = action.get("duration", 1)
+            elif action_type == 'scroll':
+                if GUI_AVAILABLE and pyautogui:
+                    x, y = params.get('coordinates', [500, 500])
+                    direction = params.get('direction', 'down')
+                    amount = params.get('amount', 3)
+                    scroll_amount = amount if direction == 'down' else -amount
+                    pyautogui.moveTo(x, y)
+                    pyautogui.scroll(scroll_amount)
+                    result["success"] = True
+                    result["message"] = f"Scrolled {direction} by {amount}"
+                    print(f"[SCROLL] {direction} x{amount}\n")
+            
+            elif action_type == 'type':
+                if GUI_AVAILABLE and pyautogui:
+                    text = params.get('text', '')
+                    clear_first = params.get('clear_first', False)
+                    if clear_first:
+                        pyautogui.hotkey('ctrl', 'a')
+                        time.sleep(0.1)
+                    pyautogui.write(text)
+                    result["success"] = True
+                    result["message"] = f"Typed: {text[:30]}"
+                    print(f"[TYPE] {text[:30]}\n")
+            
+            elif action_type == 'key_press':
+                if GUI_AVAILABLE and pyautogui:
+                    keys = params.get('keys', [])
+                    combo = params.get('combo', len(keys) > 1)
+                    if combo and len(keys) > 1:
+                        pyautogui.hotkey(*keys)
+                    else:
+                        for key in keys:
+                            pyautogui.press(key)
+                    result["success"] = True
+                    result["message"] = f"Keys: {'+'.join(keys)}"
+                    print(f"[KEY_PRESS] {'+'.join(keys)}\n")
+            
+            elif action_type == 'terminal':
+                command = params.get('command', '')
+                try:
+                    output = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=10)
+                    result["success"] = output.returncode == 0
+                    result["message"] = output.stdout[:200] if output.stdout else output.stderr[:200]
+                    print(f"[TERMINAL] {command}\n")
+                except Exception as e:
+                    result["message"] = str(e)
+            
+            elif action_type == 'wait':
+                duration = params.get('duration', 1)
                 time.sleep(duration)
                 result["success"] = True
-                result["message"] = f"Waited {duration} seconds"
+                result["message"] = f"Waited {duration}s"
+                print(f"[WAIT] {duration}s\n")
+            
+            elif action_type == 'focus_window':
+                if GUI_AVAILABLE and pyautogui:
+                    app_name = params.get('app_name', '')
+                    method = params.get('method', 'alt_tab')
+                    
+                    if method == 'alt_tab':
+                        pyautogui.hotkey('alt', 'tab')
+                        result["success"] = True
+                        result["message"] = f"Alt+Tab to switch window"
+                        print(f"[FOCUS_WINDOW] Alt+Tab\n")
+                    elif method == 'search':
+                        pyautogui.hotkey('win')
+                        time.sleep(0.3)
+                        pyautogui.write(app_name)
+                        time.sleep(0.5)
+                        pyautogui.press('enter')
+                        result["success"] = True
+                        result["message"] = f"Opened/focused {app_name}"
+                        print(f"[FOCUS_WINDOW] Searching for {app_name}\n")
+                    else:
+                        result["message"] = f"Unknown focus method: {method}"
             
             else:
-                result["message"] = f"Unknown action type: {action_type}"
+                result["message"] = f"Unknown action: {action_type}"
         
         except Exception as e:
-            result["message"] = f"Error executing {action_type}: {e}"
-            logger.error(f"Computer action error: {e}")
+            result["message"] = str(e)
+            print(f"[ERROR] {e}\n")
+            logger.error(f"Action error: {e}")
         
         return result
     
-    def send_to_llm(self, user_message: str) -> Dict[str, Any]:
-        """Send message to Gemini LLM and get response."""
+    def send_to_llm(self, prompt: str, screenshot_path: str = None, retry_info: str = None) -> Dict[str, Any]:
         try:
             if not self.model:
-                return {
-                    "action_log": "LLM not available",
-                    "status": "error",
-                    "response": "Gemini API not configured. Please check your API keys.",
-                    "computer_use": None
-                }
+                return {"status": "error", "actions": []}
             
-            logger.info(f"Sending to LLM: {user_message[:100]}...")
+            print(f"[LLM] Processing...\n")
             
-            # Send message to Gemini
-            response = self.model.generate_content(user_message)
+            content_parts = [prompt]
+            
+            if retry_info:
+                content_parts.insert(0, f"RETRY NOTICE: {retry_info}\nPlease revise your plan based on this feedback.")
+            
+            if screenshot_path and os.path.exists(screenshot_path):
+                with open(screenshot_path, 'rb') as f:
+                    image_data = f.read()
+                content_parts.append({
+                    "mime_type": "image/png",
+                    "data": image_data
+                })
+            
+            response = self.model.generate_content(content_parts)
             response_text = response.text.strip()
             
-            # Parse JSON response
-            try:
-                llm_response = json.loads(response_text)
-                logger.info(f"LLM response parsed successfully")
-                return llm_response
-            except json.JSONDecodeError:
-                # Fallback if response is not valid JSON
-                logger.warning("LLM response not valid JSON, creating fallback response")
-                return {
-                    "action_log": "Processing user request",
-                    "status": "complete",
-                    "response": response_text,
-                    "computer_use": None
-                }
+            json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+            else:
+                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group()
+                else:
+                    raise ValueError("No JSON found")
+            
+            llm_response = json.loads(json_str)
+            action_count = len(llm_response.get('actions', []))
+            print(f"[LLM] Plan: {action_count} steps\n")
+            logger.info("LLM response received")
+            return llm_response
         
         except Exception as e:
-            logger.error(f"Error communicating with LLM: {e}")
-            return {
-                "action_log": "Error communicating with AI",
-                "status": "error",
-                "response": f"Error: {e}",
-                "computer_use": None
-            }
+            print(f"[LLM] ERROR: {e}\n")
+            logger.error(f"LLM error: {e}")
+            return {"status": "error", "actions": []}
     
-    def process_user_request(self, user_message: str) -> None:
-        """Process a complete user request with LLM and computer actions."""
-        print(f"\n{'='*60}")
-        print(f"Processing: {user_message}")
-        print(f"{'='*60}")
+    def execute_task(self, user_request: str) -> None:
+        print(f"\n{'='*80}")
+        print(f" REQUEST: {user_request}")
+        print(f"{'='*80}\n")
         
-        # Step 1: Send to LLM
-        llm_response = self.send_to_llm(user_message)
+        screenshot_path = self.take_screenshot()
+        if not screenshot_path:
+            print("[ERROR] Cannot capture initial screenshot\n")
+            return
         
-        # Display LLM response
-        action_log = llm_response.get("action_log", "")
-        status = llm_response.get("status", "unknown")
-        response = llm_response.get("response", "")
-        computer_use = llm_response.get("computer_use")
+        prompt = f"""User Request: {user_request}
+
+Determine if this is a QUESTION or a TASK:
+- QUESTION: Information request, explanation, asking for knowledge
+- TASK: Action request, computer control needed, something to do on the system
+
+Respond with the appropriate JSON format:
+- For QUESTION: {{"type": "question", "response": "Your answer", "requires_action": false}}
+- For TASK: {{"type": "task", "analysis": "...", "plan": "...", "actions": [...]}}"""
         
-        print(f"\n Action Log: {action_log}")
-        print(f" Status: {status}")
-        print(f" Response: {response}")
+        initial_response = self.send_to_llm(prompt, screenshot_path)
         
-        # Step 2: Execute computer actions if present
-        if computer_use and status != "error":
-            print(f"\nExecuting Computer Action...")
+        if initial_response.get('status') == 'error':
+            print(f"[ERROR] Failed to process request\n")
+            return
+        
+        request_type = initial_response.get('type', 'unknown')
+        
+        if request_type == 'question':
+            print(f"[TYPE] Question detected\n")
+            response = initial_response.get('response', '')
+            print(f"[ANSWER]\n{response}\n")
+            print(f"{'='*80}\n")
+            return
+        
+        elif request_type == 'task':
+            print(f"[TYPE] Task detected\n")
+            self._execute_task_actions(user_request, initial_response, screenshot_path)
+        
+        else:
+            print(f"[ERROR] Unknown request type: {request_type}\n")
+    
+    def _execute_task_actions(self, task: str, llm_response: Dict[str, Any], initial_screenshot: str) -> None:
+        analysis = llm_response.get('analysis', '')
+        plan = llm_response.get('plan', '')
+        actions = llm_response.get('actions', [])
+        
+        print(f"[ANALYSIS] {analysis}\n")
+        print(f"[PLAN] {plan}\n")
+        print(f"[EXECUTING] {len(actions)} steps\n")
+        
+        step_results = []
+        failed_steps = []
+        retry_count = 0
+        max_retries = 3
+        
+        while retry_count < max_retries:
+            if retry_count == 0:
+                actions_to_execute = actions
+                step_results = []
+                failed_steps = []
+            else:
+                actions_to_execute = retry_actions
+                print(f"\n[RECOVERY ATTEMPT {retry_count}] Executing alternative plan...\n")
             
-            action_result = self.execute_computer_action(computer_use)
-            print(f"Success: {action_result['success']}")
-            print(f" Message: {action_result['message']}")
+            for i, action in enumerate(actions_to_execute, 1):
+                step_desc = action.get('description', f'Step {i}')
+                print(f"[{i}/{len(actions_to_execute)}] {step_desc}")
+                
+                result = self.execute_action(action)
+                step_results.append(result)
+                
+                if not result['success']:
+                    failed_steps.append({
+                        'step': i,
+                        'action': result['action'],
+                        'message': result['message']
+                    })
+                    print(f"[FAIL] {result['message']}\n")
+                else:
+                    print(f"[OK]\n")
+                
+                time.sleep(0.2)
+            
+            if not failed_steps:
+                print(f"\n[SUCCESS] All steps completed successfully!\n")
+                break
+            
+            if retry_count < max_retries - 1:
+                print(f"\n{'='*80}")
+                print(f" FAILURE RECOVERY - ATTEMPT {retry_count + 1}")
+                print(f"{'='*80}\n")
+                print(f"[RECOVERY] {len(failed_steps)} step(s) failed. Trying alternative approach...\n")
+                
+                retry_screenshot = self.take_screenshot()
+                retry_info = f"Previous plan failed at steps: {[f['step'] for f in failed_steps]}. Errors: {json.dumps(failed_steps)}"
+                
+                retry_prompt = f"""Task: {task}
+
+Previous execution had failures. Analyze current screen and create a COMPLETELY DIFFERENT plan.
+Failed steps details:
+{json.dumps(failed_steps, indent=2)}
+
+Try a completely different approach:
+- If you used UI before, try terminal
+- If you used terminal, try UI
+- Change the method/tool used
+- Be more precise with coordinates(calculate perfectly becausea wrong coordinate means a wrong click note you are using pyautogui for the mouse control so understand how it works)
+- Check app window focus before interacting
+
+Create a better plan that avoids these failures using alternative methods.
+Respond ONLY with JSON for a TASK (type: "task")."""
+                
+                retry_response = self.send_to_llm(retry_prompt, retry_screenshot, retry_info)
+                
+                if retry_response.get('status') != 'error' and retry_response.get('type') == 'task':
+                    retry_actions = retry_response.get('actions', [])
+                    print(f"[RECOVERY] Alternative plan: {len(retry_actions)} steps\n")
+                    retry_count += 1
+                    continue
+                else:
+                    print(f"[ERROR] Could not generate recovery plan\n")
+                    break
+            else:
+                print(f"\n[ERROR] Max retry attempts ({max_retries}) reached. Task may not be completable.\n")
+                break
         
-        print(f"\n{'='*60}\n")
+        final_screenshot = self.take_screenshot()
+        
+        print(f"\n{'='*80}")
+        print(f" COMPLETION CHECK")
+        print(f"{'='*80}\n")
+        
+        completion_prompt = f"""Task was: {task}
+
+Analyze final screenshot and confirm:
+1. Was task completed successfully?
+2. Current system state?
+3. Any issues?
+
+Respond ONLY with JSON:
+{{
+  "type": "question",
+  "response": "Your assessment (this is just for verification)",
+  "completed": true/false,
+  "state": "Your assessment",
+  "status": "success/partial/failed"
+}}"""
+        
+        verification = self.send_to_llm(completion_prompt, final_screenshot)
+        
+        print(f"[COMPLETION] Completed: {verification.get('completed', False)}")
+        print(f"[STATE] {verification.get('state', 'Unknown')}\n")
+        
+        print(f"\n{'='*80}")
+        print(f" SUMMARY")
+        print(f"{'='*80}")
+        print(f"Total Actions: {len(step_results)}")
+        print(f"Successful: {sum(1 for r in step_results if r['success'])}")
+        print(f"Failed: {sum(1 for r in step_results if not r['success'])}")
+        print(f"Retry Attempts: {retry_count}")
+        print(f"Status: {verification.get('status', 'unknown')}")
+        print(f"{'='*80}\n")
     
     def run_console_loop(self) -> None:
-        """Main console interaction loop."""
         print("\n" + "="*80)
-        print(" CONTROL - Console Test Backend")
+        print(" CONTROL - Intelligent AI Assistant & Task Executor")
         print("="*80)
-        print("This is a testing environment for the Control AI agent.")
-        print("Type your commands below, or 'help' for available commands.")
-        print("Type 'quit' or 'exit' to stop the test.\n")
+        print("Answer questions OR execute tasks - AI decides based on request type")
+        print("Commands: 'help' | 'screenshot' | 'quit'\n")
         
         while self.running:
             try:
-                # Get user input with proper handling
-                try:
-                    user_input = input(" You: ").strip()
-                except (EOFError, KeyboardInterrupt):
-                    print("\n Goodbye!")
-                    break
+                user_input = input(">> ").strip()
                 
                 if not user_input:
                     continue
                 
-                # Handle special commands
                 if user_input.lower() in ['quit', 'exit', 'q']:
-                    print(" Goodbye!")
+                    print("Goodbye!")
                     break
                 
                 elif user_input.lower() == 'help':
-                    self.show_help()
+                    print("\nCommands:")
+                    print("• screenshot - Capture current screen")
+                    print("• quit/exit - Exit program")
+                    print("\nQuestion Examples:")
+                    print("• 'What is Python?'")
+                    print("• 'How do I make pasta?'")
+                    print("• 'Explain quantum computing'")
+                    print("\nTask Examples:")
+                    print("• 'Open Chrome'")
+                    print("• 'Send a message on WhatsApp'")
+                    print("• 'Create a new folder'\n")
                     continue
                 
                 elif user_input.lower() == 'screenshot':
-                    filepath = self.take_screenshot()
-                    if filepath:
-                        print(f"Screenshot saved: {filepath}")
-                    else:
-                        print("Failed to take screenshot")
+                    path = self.take_screenshot()
+                    print(f"Saved to {path}\n")
                     continue
                 
-                elif user_input.lower() == 'test':
-                    self.run_test_sequence()
-                    continue
-                
-                # Process normal user request
-                self.process_user_request(user_input)
+                self.execute_task(user_input)
             
             except KeyboardInterrupt:
-                print("\nGoodbye!")
+                print("\nExit!")
                 break
             except Exception as e:
-                logger.error(f"Error in console loop: {e}")
-                print(f"Error: {e}")
-                # Continue running even if there's an error
-    
-    def show_help(self) -> None:
-        """Display help information."""
-        print("\n" + "="*60)
-        print(" Available Commands:")
-        print("="*60)
-        print("• help     - Show this help message")
-        print("• screenshot - Take a screenshot")
-        print("• test     - Run a test sequence")
-        print("• quit/exit - Exit the program")
-        print("\n Natural Language Examples:")
-        print("• 'Take a screenshot of my screen'")
-        print("• 'Click at coordinates 100, 200'")
-        print("• 'Type Hello World'") 
-        print("• 'Scroll down by 100 pixels'")
-        print("• 'What time is it?'")
-        print("="*60 + "\n")
-    
-    def run_test_sequence(self) -> None:
-        """Run a test sequence to verify functionality."""
-        print("\n Running Test Sequence...")
-        
-        test_commands = [
-            "Take a screenshot of the current screen",
-            "Type 'Hello from Control AI'",
-            "Wait for 2 seconds"
-        ]
-        
-        for command in test_commands:
-            print(f"\nTesting: {command}")
-            self.process_user_request(command)
-            time.sleep(1)
-        
-        print("Test sequence completed!")
-
+                print(f"[ERROR] {e}\n")
+                logger.error(f"Error: {e}")
 
 def main():
-    """Main entry point for the console test backend."""
     try:
         backend = ConsoleTestBackend()
         backend.run_console_loop()
     except Exception as e:
-        logger.error(f"Fatal error: {e}")
-        print(f"Fatal error: {e}")
+        print(f"[FATAL] {e}\n")
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()

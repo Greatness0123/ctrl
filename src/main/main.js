@@ -1,4 +1,4 @@
-const { app, BrowserWindow, globalShortcut, session, ipcMain, Menu, Tray } = require('electron');
+const { app, BrowserWindow, globalShortcut, session, ipcMain, Menu, shell, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { PythonShell } = require('python-shell');
@@ -14,13 +14,15 @@ class ControlApp {
         this.settingsWindow = null;
         this.floatingButton = null;
         this.pythonBackend = null;
-        this.tray = null;
         this.isReady = false;
         this.pythonReady = false;
         this.pythonPath = null;
+        this.user = null;
+        this.interactionEnabled = true; // Green state (can't interact with desktop)
         
         this.settings = {
-            hotkey: 'CommandOrControl+Shift+C',
+            hotkey: 'CommandOrControl+Space',
+            interactionHotkey: 'Alt+A',
             theme: 'dark',
             autoStart: true,
             googleApiKey: '',
@@ -29,7 +31,8 @@ class ControlApp {
             floatingButton: {
                 enabled: true,
                 position: { x: 100, y: 100 },
-                size: 60
+                size: 50,
+                edgeSticking: true
             }
         };
         
@@ -42,10 +45,21 @@ class ControlApp {
         if (stored) {
             this.settings = { ...this.settings, ...stored };
         }
+        
+        // Load user data if available
+        const userData = store.get('userData');
+        if (userData) {
+            this.user = userData;
+        }
     }
     
     saveSettings() {
         store.set('settings', this.settings);
+    }
+    
+    saveUserData(userData) {
+        this.user = userData;
+        store.set('userData', userData);
     }
     
     getPythonPath() {
@@ -77,14 +91,15 @@ class ControlApp {
         });
         
         app.on('window-all-closed', () => {
-            if (process.platform !== 'darwin') {
-                app.quit();
+            // Don't quit on window close - keep main process running
+            if (process.platform === 'darwin') {
+                app.dock.hide();
             }
         });
         
         app.on('activate', () => {
-            if (BrowserWindow.getAllWindows().length === 0) {
-                this.createMainWindow();
+            if (BrowserWindow.getAllWindows().length === 0 && this.user) {
+                this.createFloatingButton();
             }
         });
         
@@ -99,17 +114,22 @@ class ControlApp {
         try {
             console.log('[MAIN] Initializing Control AI...');
             
+            // Hide dock icon on macOS
+            if (process.platform === 'darwin') {
+                app.dock.hide();
+            }
+            
             await this.initializePythonBackend();
             
-            this.createMainWindow();
-            
-            if (this.settings.floatingButton.enabled) {
+            // Only show entry point if user is not authenticated
+            if (!this.user) {
+                this.createMainWindow();
+            } else {
+                // User is authenticated, create floating button directly
                 this.createFloatingButton();
             }
             
-            this.setupGlobalHotkey();
-            
-            this.setupSystemTray();
+            this.setupGlobalHotkeys();
             
             this.isReady = true;
             console.log('[MAIN] Control AI initialized successfully');
@@ -177,12 +197,18 @@ class ControlApp {
     }
     
     createMainWindow() {
-        console.log('[MAIN] Creating main window...');
+        console.log('[MAIN] Creating main authentication window...');
         
         this.mainWindow = new BrowserWindow({
-            width: 1200,
-            height: 800,
-            show: true,
+            width: 450,
+            height: 600,
+            show: false,
+            frame: true,
+            alwaysOnTop: false,
+            skipTaskbar: false,
+            resizable: false,
+            center: true,
+            webSecurity: false,
             webPreferences: {
                 nodeIntegration: false,
                 contextIsolation: true,
@@ -197,33 +223,46 @@ class ControlApp {
             console.error('[MAIN] Failed to load main window:', err);
         });
         
+        this.mainWindow.once('ready-to-show', () => {
+            this.mainWindow.show();
+        });
+        
         this.mainWindow.on('close', (event) => {
             if (!app.isQuitting) {
                 event.preventDefault();
                 this.mainWindow.hide();
+                // Create floating button when entry point is hidden
+                if (this.user) {
+                    this.createFloatingButton();
+                }
             }
         });
         
-        console.log('[MAIN] Main window created');
+        console.log('[MAIN] Main authentication window created');
     }
     
     createFloatingButton() {
-        console.log('[MAIN] Creating floating button...');
+        if (this.floatingButton && !this.floatingButton.isDestroyed()) {
+            return;
+        }
+        
+        console.log('[MAIN] Creating floating button window...');
         
         const { x, y } = this.settings.floatingButton.position;
         const size = this.settings.floatingButton.size;
         
         this.floatingButton = new BrowserWindow({
-            width: size + 10,
-            height: size + 10,
+            width: size,
+            height: size,
             x: x,
             y: y,
             frame: false,
             alwaysOnTop: true,
             skipTaskbar: true,
             resizable: false,
-            movable: true,
+            movable: false,
             transparent: true,
+            hasShadow: false,
             webPreferences: {
                 nodeIntegration: false,
                 contextIsolation: true,
@@ -238,32 +277,91 @@ class ControlApp {
         
         this.floatingButton.setIgnoreMouseEvents(false);
         
+        // Setup edge sticking
+        this.setupEdgeSticking();
+        
         this.floatingButton.on('moved', () => {
             const bounds = this.floatingButton.getBounds();
+            
+            if (this.settings.floatingButton.edgeSticking) {
+                const { screen } = require('electron');
+                const primaryDisplay = screen.getPrimaryDisplay();
+                const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+                
+                // Stick to edges with magnetic effect
+                const snapDistance = 30;
+                
+                if (bounds.x < snapDistance) bounds.x = 0;
+                if (bounds.y < snapDistance) bounds.y = 0;
+                if (bounds.x + size > screenWidth - snapDistance) bounds.x = screenWidth - size;
+                if (bounds.y + size > screenHeight - snapDistance) bounds.y = screenHeight - size;
+                
+                this.floatingButton.setPosition(bounds.x, bounds.y);
+            }
+            
             this.settings.floatingButton.position = { x: bounds.x, y: bounds.y };
             this.saveSettings();
-            console.log('[MAIN] Floating button position saved:', this.settings.floatingButton.position);
         });
         
+        // Hide floating button when chat window is shown
+        if (this.chatWindow && this.chatWindow.isVisible()) {
+            this.floatingButton.hide();
+        }
+        
         console.log('[MAIN] Floating button created');
+    }
+    
+    setupEdgeSticking() {
+        const { screen } = require('electron');
+        
+        // Monitor screen changes for edge sticking
+        screen.on('display-metrics-changed', () => {
+            if (this.floatingButton && !this.floatingButton.isDestroyed()) {
+                const bounds = this.floatingButton.getBounds();
+                const primaryDisplay = screen.getPrimaryDisplay();
+                const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+                const size = this.settings.floatingButton.size;
+                
+                // Keep button within screen bounds
+                bounds.x = Math.max(0, Math.min(bounds.x, screenWidth - size));
+                bounds.y = Math.max(0, Math.min(bounds.y, screenHeight - size));
+                
+                this.floatingButton.setPosition(bounds.x, bounds.y);
+                this.settings.floatingButton.position = { x: bounds.x, y: bounds.y };
+                this.saveSettings();
+            }
+        });
     }
     
     createChatWindow() {
         console.log('[MAIN] Creating chat window...');
         
         if (this.chatWindow) {
-            this.chatWindow.focus();
+            if (this.chatWindow.isVisible()) {
+                this.chatWindow.focus();
+            } else {
+                this.chatWindow.show();
+                this.chatWindow.focus();
+            }
             return;
         }
         
+        const { screen } = require('electron');
+        const primaryDisplay = screen.getPrimaryDisplay();
+        const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+        
         this.chatWindow = new BrowserWindow({
-            width: 500,
-            height: 700,
+            width: screenWidth,
+            height: screenHeight,
+            x: 0,
+            y: 0,
             frame: false,
             alwaysOnTop: true,
             skipTaskbar: true,
-            resizable: true,
-            transparent: false,
+            resizable: false,
+            movable: false,
+            transparent: true,
+            hasShadow: false,
             webPreferences: {
                 nodeIntegration: false,
                 contextIsolation: true,
@@ -281,15 +379,25 @@ class ControlApp {
             console.log('[MAIN] Chat window closed');
         });
         
+        // Hide floating button when chat window is shown
         if (this.floatingButton && !this.floatingButton.isDestroyed()) {
-            const buttonBounds = this.floatingButton.getBounds();
-            this.chatWindow.setPosition(
-                buttonBounds.x + buttonBounds.width + 10,
-                buttonBounds.y
-            );
+            this.floatingButton.hide();
         }
         
         console.log('[MAIN] Chat window created');
+    }
+    
+    hideChatWindow() {
+        if (this.chatWindow && !this.chatWindow.isDestroyed()) {
+            this.chatWindow.hide();
+            
+            // Show floating button when chat window is hidden
+            if (this.floatingButton && !this.floatingButton.isDestroyed()) {
+                this.floatingButton.show();
+            }
+            
+            console.log('[MAIN] Chat window hidden');
+        }
     }
     
     createSettingsWindow() {
@@ -300,10 +408,22 @@ class ControlApp {
             return;
         }
         
+        const { screen } = require('electron');
+        const primaryDisplay = screen.getPrimaryDisplay();
+        const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+        
         this.settingsWindow = new BrowserWindow({
-            width: 600,
-            height: 500,
+            width: screenWidth,
+            height: screenHeight,
+            x: 0,
+            y: 0,
+            frame: false,
+            alwaysOnTop: true,
+            skipTaskbar: true,
             resizable: false,
+            movable: false,
+            transparent: true,
+            hasShadow: false,
             webPreferences: {
                 nodeIntegration: false,
                 contextIsolation: true,
@@ -324,88 +444,86 @@ class ControlApp {
         console.log('[MAIN] Settings window created');
     }
     
-    setupGlobalHotkey() {
-        console.log('[MAIN] Setting up global hotkey:', this.settings.hotkey);
+    setupGlobalHotkeys() {
+        console.log('[MAIN] Setting up global hotkeys...');
         
-        if (this.globalHotkey) {
-            globalShortcut.unregister(this.globalHotkey);
+        // Chat window toggle hotkey (Ctrl+Space or Cmd+Space)
+        if (this.chatHotkey) {
+            globalShortcut.unregister(this.chatHotkey);
         }
         
-        const ret = globalShortcut.register(this.settings.hotkey, () => {
-            console.log('[MAIN] Hotkey pressed:', this.settings.hotkey);
+        const chatRet = globalShortcut.register(this.settings.hotkey, () => {
+            console.log('[MAIN] Chat hotkey pressed:', this.settings.hotkey);
             this.toggleChatWindow();
         });
         
-        if (!ret) {
-            console.error('[MAIN] Failed to register global hotkey:', this.settings.hotkey);
+        if (!chatRet) {
+            console.error('[MAIN] Failed to register chat hotkey:', this.settings.hotkey);
         } else {
-            console.log('[MAIN] Global hotkey registered successfully');
+            console.log('[MAIN] Chat hotkey registered successfully');
+            this.chatHotkey = this.settings.hotkey;
         }
         
-        this.globalHotkey = this.settings.hotkey;
-    }
-    
-    setupSystemTray() {
-        console.log('[MAIN] Setting up system tray...');
+        // Interaction toggle hotkey (Alt+A)
+        if (this.interactionHotkey) {
+            globalShortcut.unregister(this.interactionHotkey);
+        }
         
-        try {
-            const trayIconPath = path.join(__dirname, '../../assets/icons/tray.png');
-            
-            if (!fs.existsSync(trayIconPath)) {
-                console.log('[MAIN] Tray icon not found at:', trayIconPath);
-                return;
-            }
-            
-            this.tray = new Tray(trayIconPath);
-            
-            const contextMenu = Menu.buildFromTemplate([
-                {
-                    label: 'Show/Hide Chat',
-                    click: () => this.toggleChatWindow()
-                },
-                {
-                    label: 'Settings',
-                    click: () => this.createSettingsWindow()
-                },
-                { type: 'separator' },
-                {
-                    label: 'Quit',
-                    click: () => app.quit()
-                }
-            ]);
-            
-            this.tray.setToolTip('Control AI');
-            this.tray.setContextMenu(contextMenu);
-            
-            this.tray.on('click', () => {
-                this.toggleChatWindow();
-            });
-            
-            console.log('[MAIN] System tray created');
-        } catch (error) {
-            console.error('[MAIN] Failed to setup system tray:', error);
+        const interactionRet = globalShortcut.register(this.settings.interactionHotkey, () => {
+            console.log('[MAIN] Interaction hotkey pressed:', this.settings.interactionHotkey);
+            this.toggleInteraction();
+        });
+        
+        if (!interactionRet) {
+            console.error('[MAIN] Failed to register interaction hotkey:', this.settings.interactionHotkey);
+        } else {
+            console.log('[MAIN] Interaction hotkey registered successfully');
+            this.interactionHotkey = this.settings.interactionHotkey;
         }
     }
     
     toggleChatWindow() {
         console.log('[MAIN] Toggling chat window...');
         
+        if (!this.user) {
+            console.log('[MAIN] User not authenticated, showing main window');
+            if (this.mainWindow) {
+                this.mainWindow.show();
+                this.mainWindow.focus();
+            } else {
+                this.createMainWindow();
+            }
+            return;
+        }
+        
         if (this.chatWindow) {
             if (this.chatWindow.isVisible()) {
-                this.chatWindow.hide();
-                console.log('[MAIN] Chat window hidden');
+                this.hideChatWindow();
             } else {
                 this.chatWindow.show();
                 this.chatWindow.focus();
-                console.log('[MAIN] Chat window shown');
+                if (this.floatingButton && !this.floatingButton.isDestroyed()) {
+                    this.floatingButton.hide();
+                }
             }
         } else {
             this.createChatWindow();
-            if (this.chatWindow) {
-                this.chatWindow.show();
-                this.chatWindow.focus();
-            }
         }
+    }
+    
+    toggleInteraction() {
+        this.interactionEnabled = !this.interactionEnabled;
+        
+        // Update all windows with new interaction state
+        if (this.chatWindow && !this.chatWindow.isDestroyed()) {
+            this.chatWindow.webContents.send('interaction-toggled', this.interactionEnabled);
+        }
+        
+        if (this.settingsWindow && !this.settingsWindow.isDestroyed()) {
+            this.settingsWindow.webContents.send('interaction-toggled', this.interactionEnabled);
+        }
+        
+        console.log('[MAIN] Interaction toggled:', this.interactionEnabled ? 'ENABLED (Green)' : 'DISABLED (Red)');
     }
     
     setupIPCHandlers() {
@@ -416,22 +534,81 @@ class ControlApp {
             return this.settings;
         });
         
+        ipcMain.handle('get-user-data', () => {
+            console.log('[IPC] get-user-data');
+            return this.user;
+        });
+        
         ipcMain.handle('save-settings', (event, newSettings) => {
             console.log('[IPC] save-settings:', newSettings);
             this.settings = { ...this.settings, ...newSettings };
             this.saveSettings();
             
-            if (newSettings.hotkey && newSettings.hotkey !== this.globalHotkey) {
-                console.log('[IPC] Hotkey changed, re-registering...');
-                this.setupGlobalHotkey();
+            // Re-register hotkeys if they changed
+            if (newSettings.hotkey && newSettings.hotkey !== this.chatHotkey) {
+                console.log('[IPC] Chat hotkey changed, re-registering...');
+                this.setupGlobalHotkeys();
             }
             
-            if (newSettings.floatingButton && this.floatingButton && !this.floatingButton.isDestroyed()) {
-                const { x, y } = newSettings.floatingButton.position;
-                this.floatingButton.setPosition(x, y);
+            if (newSettings.interactionHotkey && newSettings.interactionHotkey !== this.interactionHotkey) {
+                console.log('[IPC] Interaction hotkey changed, re-registering...');
+                this.setupGlobalHotkeys();
             }
             
             return true;
+        });
+        
+        ipcMain.handle('authenticate-user', async (event, userData) => {
+            console.log('[IPC] authenticate-user');
+            
+            try {
+                this.saveUserData(userData);
+                
+                // Hide main window and show floating button
+                if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                    this.mainWindow.hide();
+                }
+                
+                this.createFloatingButton();
+                
+                return { success: true };
+            } catch (error) {
+                console.error('[IPC] Authentication error:', error);
+                return { success: false, error: error.message };
+            }
+        });
+        
+        ipcMain.handle('sign-out', async () => {
+            console.log('[IPC] sign-out');
+            
+            try {
+                this.user = null;
+                store.delete('userData');
+                
+                // Hide all windows
+                if (this.chatWindow && !this.chatWindow.isDestroyed()) {
+                    this.chatWindow.hide();
+                }
+                if (this.settingsWindow && !this.settingsWindow.isDestroyed()) {
+                    this.settingsWindow.close();
+                }
+                if (this.floatingButton && !this.floatingButton.isDestroyed()) {
+                    this.floatingButton.hide();
+                }
+                
+                // Show main window
+                if (this.mainWindow) {
+                    this.mainWindow.show();
+                    this.mainWindow.focus();
+                } else {
+                    this.createMainWindow();
+                }
+                
+                return { success: true };
+            } catch (error) {
+                console.error('[IPC] Sign out error:', error);
+                return { success: false, error: error.message };
+            }
         });
         
         ipcMain.handle('send-to-backend', async (event, message) => {
@@ -469,45 +646,32 @@ class ControlApp {
             
             switch (windowName) {
                 case 'chat':
-                    if (this.chatWindow) {
-                        this.chatWindow.close();
-                    }
+                    this.hideChatWindow();
                     break;
                 case 'settings':
                     if (this.settingsWindow) {
                         this.settingsWindow.close();
                     }
                     break;
-            }
-            return true;
-        });
-        
-        ipcMain.handle('minimize-window', (event, windowName) => {
-            console.log('[IPC] minimize-window:', windowName);
-            
-            switch (windowName) {
-                case 'chat':
-                    if (this.chatWindow) {
-                        this.chatWindow.hide();
+                case 'main':
+                    if (this.mainWindow) {
+                        this.mainWindow.hide();
+                        if (this.user) {
+                            this.createFloatingButton();
+                        }
                     }
                     break;
             }
             return true;
         });
         
-        ipcMain.handle('authenticate-google', async (event, idToken) => {
-            console.log('[IPC] authenticate-google');
-            
-            try {
-                this.settings.googleIdToken = idToken;
-                this.saveSettings();
-                return { success: true };
-            } catch (error) {
-                console.error('[IPC] Authentication error:', error);
-                return { success: false, error: error.message };
-            }
+        ipcMain.handle('open-external', (event, url) => {
+            console.log('[IPC] open-external:', url);
+            shell.openExternal(url);
+            return true;
         });
         
+        // Legacy event handlers for floating button
         ipcMain.on('toggle-chat', () => {
             console.log('[IPC] toggle-chat from floating button');
             this.toggleChatWindow();
@@ -526,10 +690,13 @@ class ControlApp {
         
         app.isQuitting = true;
         
-        if (this.globalHotkey) {
-            globalShortcut.unregister(this.globalHotkey);
-            globalShortcut.unregisterAll();
+        if (this.chatHotkey) {
+            globalShortcut.unregister(this.chatHotkey);
         }
+        if (this.interactionHotkey) {
+            globalShortcut.unregister(this.interactionHotkey);
+        }
+        globalShortcut.unregisterAll();
         
         if (this.pythonBackend) {
             try {
@@ -543,7 +710,6 @@ class ControlApp {
         if (this.chatWindow) this.chatWindow.destroy();
         if (this.settingsWindow) this.settingsWindow.destroy();
         if (this.floatingButton) this.floatingButton.destroy();
-        if (this.tray) this.tray.destroy();
         
         console.log('[MAIN] Cleanup complete');
     }

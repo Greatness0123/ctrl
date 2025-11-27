@@ -19,10 +19,8 @@
             overflow: hidden;
             margin: 0;
             padding: 0;
-        }
-
-        body {
             -webkit-app-region: drag;
+            user-select: none;
         }
 
         .button-container {
@@ -31,11 +29,12 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            position: relative;
         }
 
         .floating-button {
-            width: 60px;
-            height: 60px;
+            width: 100%;
+            height: 100%;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             border-radius: 50%;
             display: flex;
@@ -44,16 +43,16 @@
             cursor: pointer;
             box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
             transition: all 0.3s ease;
-            position: fixed;
+            position: relative;
             -webkit-app-region: no-drag;
             border: none;
             padding: 0;
-            user-select: none;
+            overflow: hidden;
         }
 
         .floating-button:hover {
             transform: scale(1.1);
-            box-shadow: 0 6px 25px rgba(102, 126, 234, 0.8);
+            box-shadow: 0 6px 25px rgba(102, 126, 234, 0.6);
         }
 
         .floating-button:active {
@@ -69,7 +68,7 @@
                 box-shadow: 0 4px 20px rgba(102, 126, 234, 0.3);
             }
             50% {
-                box-shadow: 0 4px 30px rgba(102, 126, 234, 0.8);
+                box-shadow: 0 4px 30px rgba(102, 126, 234, 0.6);
             }
             100% {
                 box-shadow: 0 4px 20px rgba(102, 126, 234, 0.3);
@@ -77,10 +76,14 @@
         }
 
         .icon {
-            width: 32px;
-            height: 32px;
+            width: 60%;
+            height: 60%;
             color: white;
             font-size: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
         }
 
         .ripple {
@@ -101,7 +104,7 @@
 
         .tooltip {
             position: absolute;
-            bottom: 70px;
+            bottom: 60px;
             left: 50%;
             transform: translateX(-50%);
             background: rgba(0, 0, 0, 0.9);
@@ -124,8 +127,8 @@
             position: absolute;
             bottom: 4px;
             right: 4px;
-            width: 14px;
-            height: 14px;
+            width: 12px;
+            height: 12px;
             background: #10b981;
             border: 2px solid white;
             border-radius: 50%;
@@ -133,60 +136,106 @@
         }
 
         @keyframes pulse-dot {
-            0%, 100% {
-                opacity: 1;
+            0%, 100% { 
+                opacity: 1; 
             }
-            50% {
-                opacity: 0.6;
+            50% { 
+                opacity: 0.6; 
             }
         }
+
+        .drag-indicator {
+            position: absolute;
+            top: 2px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 20px;
+            height: 2px;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 1px;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .button-container:hover .drag-indicator {
+            opacity: 1;
+        }
+
+        /* Custom app icon background */
+        .floating-button::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 90%;
+            height: 90%;
+            background: url('../icon-removebg-preview.png') no-repeat center center;
+            background-size: contain;
+            opacity: 0.9;
+            pointer-events: none;
+        }
+
+        .floating-button .icon {
+            opacity: 0.1; /* Fallback if custom icon doesn't load */
+        }
     </style>
+<script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
 </head>
 <body>
     <div class="button-container">
         <button class="floating-button pulse" id="floatingButton" title="Open Control AI">
+            <div class="drag-indicator"></div>
             <div class="status-indicator"></div>
             <i class="fas fa-robot icon"></i>
-            <div class="tooltip">Click to open Control AI<br>(Drag to move)</div>
+            <div class="tooltip">
+                Control AI<br>
+                Click to open • Drag to move<br>
+                Double-click for settings
+            </div>
         </button>
     </div>
 
     <script>
         const button = document.getElementById('floatingButton');
+        const container = document.querySelector('.button-container');
         let isDragging = false;
-        let startX, startY;
+        let startX, startY, initialX, initialY;
         let lastClickTime = 0;
 
         document.addEventListener('DOMContentLoaded', () => {
             setupEventListeners();
-            centerButton();
+            console.log('[FLOATING] Floating button initialized');
         });
 
         function setupEventListeners() {
+            // Mouse events for desktop
             button.addEventListener('mousedown', startDragging);
             button.addEventListener('click', handleButtonClick);
-            button.addEventListener('dblclick', openSettings);
+            button.addEventListener('dblclick', handleDoubleClick);
+            
+            // Prevent context menu
             document.addEventListener('contextmenu', (e) => {
                 e.preventDefault();
                 return false;
             });
-        }
 
-        function centerButton() {
-            const screenWidth = window.innerWidth;
-            const screenHeight = window.innerHeight;
-            const buttonSize = 60;
-
-            button.style.left = (screenWidth - buttonSize) / 2 + 'px';
-            button.style.top = (screenHeight - buttonSize) / 2 + 'px';
+            // Touch events for mobile support
+            button.addEventListener('touchstart', handleTouchStart, { passive: false });
+            button.addEventListener('touchmove', handleTouchMove, { passive: false });
+            button.addEventListener('touchend', handleTouchEnd);
         }
 
         function startDragging(e) {
-            if (e.button !== 0) return;
+            if (e.button !== 0) return; // Only left mouse button
 
             isDragging = false;
             startX = e.clientX;
             startY = e.clientY;
+            
+            const bounds = button.getBoundingClientRect();
+            initialX = bounds.left;
+            initialY = bounds.top;
 
             const onMouseMove = (moveEvent) => {
                 const deltaX = Math.abs(moveEvent.clientX - startX);
@@ -194,26 +243,24 @@
 
                 if (deltaX > 5 || deltaY > 5) {
                     isDragging = true;
+                    document.body.style.cursor = 'grabbing';
                 }
 
                 if (isDragging) {
-                    const newX = Math.max(0, Math.min(moveEvent.clientX - 30, window.innerWidth - 60));
-                    const newY = Math.max(0, Math.min(moveEvent.clientY - 30, window.innerHeight - 60));
-
-                    button.style.left = newX + 'px';
-                    button.style.top = newY + 'px';
+                    const newX = initialX + (moveEvent.clientX - startX);
+                    const newY = initialY + (moveEvent.clientY - startY);
+                    
+                    // Move the window by updating its position
+                    if (window.electronAPI && window.electronAPI.moveWindow) {
+                        window.electronAPI.moveWindow(newX, newY);
+                    }
                 }
             };
 
             const onMouseUp = () => {
                 document.removeEventListener('mousemove', onMouseMove);
                 document.removeEventListener('mouseup', onMouseUp);
-
-                if (isDragging) {
-                    saveButtonPosition();
-                }
-
-                isDragging = false;
+                document.body.style.cursor = 'default';
             };
 
             document.addEventListener('mousemove', onMouseMove);
@@ -222,17 +269,74 @@
             e.preventDefault();
         }
 
+        function handleTouchStart(e) {
+            const touch = e.touches[0];
+            isDragging = false;
+            startX = touch.clientX;
+            startY = touch.clientY;
+            
+            const bounds = button.getBoundingClientRect();
+            initialX = bounds.left;
+            initialY = bounds.top;
+        }
+
+        function handleTouchMove(e) {
+            if (isDragging) {
+                e.preventDefault();
+            }
+            
+            const touch = e.touches[0];
+            const deltaX = Math.abs(touch.clientX - startX);
+            const deltaY = Math.abs(touch.clientY - startY);
+
+            if (deltaX > 5 || deltaY > 5) {
+                isDragging = true;
+            }
+
+            if (isDragging) {
+                const newX = initialX + (touch.clientX - startX);
+                const newY = initialY + (touch.clientY - startY);
+                
+                if (window.electronAPI && window.electronAPI.moveWindow) {
+                    window.electronAPI.moveWindow(newX, newY);
+                }
+            }
+        }
+
+        function handleTouchEnd(e) {
+            if (!isDragging) {
+                handleButtonClick(e);
+            }
+            isDragging = false;
+        }
+
         function handleButtonClick(e) {
             if (isDragging) return;
 
             const now = Date.now();
             if (now - lastClickTime < 300) {
-                return;
+                return; // Prevent double-click from triggering single click
             }
             lastClickTime = now;
 
             createRipple(e);
+            
+            // Add click animation
+            button.style.transform = 'scale(0.9)';
+            setTimeout(() => {
+                button.style.transform = '';
+            }, 150);
+
+            // Open chat window
             toggleChatWindow();
+        }
+
+        function handleDoubleClick(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            createRipple(e);
+            openSettings();
         }
 
         function createRipple(e) {
@@ -241,8 +345,18 @@
 
             const rect = button.getBoundingClientRect();
             const size = Math.max(rect.width, rect.height);
-            const x = e.clientX - rect.left - size / 2;
-            const y = e.clientY - rect.top - size / 2;
+            
+            let clientX, clientY;
+            if (e.touches) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+            
+            const x = clientX - rect.left - size / 2;
+            const y = clientY - rect.top - size / 2;
 
             ripple.style.width = ripple.style.height = size + 'px';
             ripple.style.left = x + 'px';
@@ -258,58 +372,54 @@
         }
 
         function toggleChatWindow() {
-            button.style.pointerEvents = 'none';
-            button.style.transform = 'scale(0.9)';
-
-            setTimeout(() => {
-                button.style.transform = '';
-                button.style.pointerEvents = 'auto';
-            }, 200);
-
-            if (window.electronAPI && window.electronAPI.sendToMain) {
+            console.log('[FLOATING] Toggling chat window');
+            
+            if (window.electronAPI) {
                 window.electronAPI.sendToMain('toggle-chat');
             }
         }
 
-        function saveButtonPosition() {
-            const x = parseFloat(button.style.left);
-            const y = parseFloat(button.style.top);
-
-            if (window.electronAPI && window.electronAPI.saveButtonPosition) {
-                window.electronAPI.saveButtonPosition(x, y);
-            }
-        }
-
         function openSettings() {
-            if (window.electronAPI && window.electronAPI.sendToMain) {
+            console.log('[FLOATING] Opening settings');
+            
+            if (window.electronAPI) {
                 window.electronAPI.sendToMain('open-settings');
             }
         }
 
         function updateStatus(status) {
+            const statusIndicator = document.querySelector('.status-indicator');
+            
             if (status === 'active') {
                 button.classList.add('pulse');
+                statusIndicator.style.background = '#10b981';
+            } else if (status === 'busy') {
+                button.classList.remove('pulse');
+                statusIndicator.style.background = '#f59e0b';
+            } else if (status === 'error') {
+                button.classList.remove('pulse');
+                statusIndicator.style.background = '#ef4444';
             } else {
                 button.classList.remove('pulse');
+                statusIndicator.style.background = '#10b981';
             }
         }
 
+        // Listen for status updates from main process
         if (window.electronAPI && window.electronAPI.onStatusUpdate) {
             window.electronAPI.onStatusUpdate(updateStatus);
         }
 
+        // Handle window resize
         window.addEventListener('resize', () => {
-            const x = parseFloat(button.style.left);
-            const y = parseFloat(button.style.top);
+            // Button will automatically adjust due to CSS
+            console.log('[FLOATING] Window resized');
+        });
 
-            const maxX = window.innerWidth - 60;
-            const maxY = window.innerHeight - 60;
-
-            if (x > maxX) {
-                button.style.left = maxX + 'px';
-            }
-            if (y > maxY) {
-                button.style.top = maxY + 'px';
+        // Prevent text selection while dragging
+        document.addEventListener('selectstart', (e) => {
+            if (isDragging) {
+                e.preventDefault();
             }
         });
     </script>

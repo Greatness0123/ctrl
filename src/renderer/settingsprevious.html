@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control AI Settings</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        'control': {
+                            primary: '#3B82F6',
+                            secondary: '#1E293B',
+                            accent: '#F59E0B'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .glass-morphism {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .dark .glass-morphism {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .tab-active {
+            background: rgba(59, 130, 246, 0.2);
+            border-bottom: 2px solid #3B82F6;
+        }
+        
+        .settings-input {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .dark .settings-input {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .hotkey-key {
+            background: rgba(59, 130, 246, 0.2);
+            border: 1px solid rgba(59, 130, 246, 0.4);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+    </style>
+<script src="https://sites.super.myninja.ai/_assets/ninja-daytona-script.js"></script>
+</head>
+<body class="bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-white">
+    <div class="min-h-screen">
+        <!-- Header -->
+        <div class="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700">
+            <div class="px-6 py-4 flex items-center justify-between">
+                <h1 class="text-2xl font-bold flex items-center">
+                    <svg class="w-8 h-8 mr-3 text-control-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                    </svg>
+                    Settings
+                </h1>
+                <button onclick="closeSettings()" class="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Tab Navigation -->
+        <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+            <div class="px-6">
+                <nav class="flex space-x-8">
+                    <button onclick="switchTab('general')" id="tab-general" class="py-3 px-1 border-b-2 font-medium text-sm tab-active transition-colors">
+                        General
+                    </button>
+                    <button onclick="switchTab('hotkeys')" id="tab-hotkeys" class="py-3 px-1 border-b-2 font-medium text-sm border-transparent hover:border-gray-300 dark:hover:border-gray-600 transition-colors">
+                        Hotkeys
+                    </button>
+                    <button onclick="switchTab('account')" id="tab-account" class="py-3 px-1 border-b-2 font-medium text-sm border-transparent hover:border-gray-300 dark:hover:border-gray-600 transition-colors">
+                        Account
+                    </button>
+                    <button onclick="switchTab('advanced')" id="tab-advanced" class="py-3 px-1 border-b-2 font-medium text-sm border-transparent hover:border-gray-300 dark:hover:border-gray-600 transition-colors">
+                        Advanced
+                    </button>
+                </nav>
+            </div>
+        </div>
+
+        <!-- Content Area -->
+        <div class="p-6">
+            <!-- General Tab -->
+            <div id="content-general" class="tab-content">
+                <div class="max-w-2xl space-y-6">
+                    <!-- Theme -->
+                    <div class="glass-morphism rounded-lg p-6">
+                        <h3 class="text-lg font-semibold mb-4">Appearance</h3>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium mb-2">Theme</label>
+                                <select id="themeSelect" class="settings-input w-full px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-control-primary">
+                                    <option value="light">Light</option>
+                                    <option value="dark">Dark</option>
+                                    <option value="super">Super</option>
+                                </select>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <div class="font-medium">Floating Button</div>
+                                    <div class="text-sm text-gray-600 dark:text-gray-400">Show floating action button</div>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" id="floatingButtonToggle" class="sr-only peer" checked>
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                                </label>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <div class="font-medium">Auto Start</div>
+                                    <div class="text-sm text-gray-600 dark:text-gray-400">Launch Control AI on system startup</div>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" id="autoStartToggle" class="sr-only peer" checked>
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Notifications -->
+                    <div class="glass-morphism rounded-lg p-6">
+                        <h3 class="text-lg font-semibold mb-4">Notifications</h3>
+                        <div class="space-y-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <div class="font-medium">Sound Effects</div>
+                                    <div class="text-sm text-gray-600 dark:text-gray-400">Play sounds for notifications</div>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" id="soundToggle" class="sr-only peer">
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                                </label>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <div class="font-medium">Desktop Notifications</div>
+                                    <div class="text-sm text-gray-600 dark:text-gray-400">Show system notifications</div>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" id="notificationsToggle" class="sr-only peer" checked>
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Hotkeys Tab -->
+            <div id="content-hotkeys" class="tab-content hidden">
+                <div class="max-w-2xl space-y-6">
+                    <div class="glass-morphism rounded-lg p-6">
+                        <h3 class="text-lg font-semibold mb-4">Keyboard Shortcuts</h3>
+                        <div class="space-y-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <div class="font-medium">Toggle Chat</div>
+                                    <div class="text-sm text-gray-600 dark:text-gray-400">Open or close the chat window</div>
+                                </div>
+                                <div class="flex items-center space-x-2">
+                                    <span class="hotkey-key" id="currentHotkey">Ctrl+Shift+C</span>
+                                    <button onclick="changeHotkey()" class="px-3 py-1 bg-control-primary text-white rounded hover:bg-blue-600 transition-colors text-sm">
+                                        Change
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <div class="font-medium">Screenshot</div>
+                                    <div class="text-sm text-gray-600 dark:text-gray-400">Capture screen area</div>
+                                </div>
+                                <div class="hotkey-key">Ctrl+Shift+S</div>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <div class="font-medium">Voice Input</div>
+                                    <div class="text-sm text-gray-600 dark:text-gray-400">Start voice recording</div>
+                                </div>
+                                <div class="hotkey-key">Ctrl+Shift+V</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="glass-morphism rounded-lg p-6">
+                        <h3 class="text-lg font-semibold mb-4">Recording Hotkey</h3>
+                        <div class="p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+                            <p class="text-sm text-yellow-800 dark:text-yellow-200">
+                                Click "Change" and press your desired key combination. Use Ctrl, Alt, Shift, or Meta/Cmd modifiers.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Account Tab -->
+            <div id="content-account" class="tab-content hidden">
+                <div class="max-w-2xl space-y-6">
+                    <!-- Google Authentication -->
+                    <div class="glass-morphism rounded-lg p-6">
+                        <h3 class="text-lg font-semibold mb-4">Google Account</h3>
+                        <div id="authSection">
+                            <div id="signInButton" class="text-center">
+                                <p class="mb-4 text-gray-600 dark:text-gray-400">Sign in with your Google account to sync settings and access premium features.</p>
+                                <div id="gSignInWrapper"></div>
+                            </div>
+                            <div id="userInfo" class="hidden">
+                                <div class="flex items-center space-x-4">
+                                    <img id="userAvatar" src="" alt="User Avatar" class="w-16 h-16 rounded-full">
+                                    <div>
+                                        <div id="userName" class="font-semibold"></div>
+                                        <div id="userEmail" class="text-sm text-gray-600 dark:text-gray-400"></div>
+                                    </div>
+                                </div>
+                                <button onclick="signOut()" class="mt-4 px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition-colors">
+                                    Sign Out
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Plan Information -->
+                    <div class="glass-morphism rounded-lg p-6">
+                        <h3 class="text-lg font-semibold mb-4">Subscription Plan</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div class="p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+                                <div class="text-sm text-gray-600 dark:text-gray-400">Current Plan</div>
+                                <div id="currentPlan" class="text-xl font-bold text-control-primary">Free</div>
+                            </div>
+                            <div class="p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+                                <div class="text-sm text-gray-600 dark:text-gray-400">Requests Today</div>
+                                <div id="requestsToday" class="text-xl font-bold">0</div>
+                            </div>
+                            <div class="p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+                                <div class="text-sm text-gray-600 dark:text-gray-400">Tokens Used</div>
+                                <div id="tokensUsed" class="text-xl font-bold">0</div>
+                            </div>
+                        </div>
+                        <div class="mt-4">
+                            <button onclick="upgradePlan()" class="px-4 py-2 bg-control-accent text-white rounded hover:bg-yellow-600 transition-colors">
+                                Upgrade to Pro
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Advanced Tab -->
+            <div id="content-advanced" class="tab-content hidden">
+                <div class="max-w-2xl space-y-6">
+                    <!-- API Keys -->
+                    <div class="glass-morphism rounded-lg p-6">
+                        <h3 class="text-lg font-semibold mb-4">API Configuration</h3>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium mb-2">Gemini API Key</label>
+                                <input type="password" id="geminiApiKey" class="settings-input w-full px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-control-primary" placeholder="Enter your Gemini API key">
+                                <p class="text-xs text-gray-600 dark:text-gray-400 mt-1">Required for AI functionality. Get your key from Google AI Studio.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Debug Options -->
+                    <div class="glass-morphism rounded-lg p-6">
+                        <h3 class="text-lg font-semibold mb-4">Debug Options</h3>
+                        <div class="space-y-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <div class="font-medium">Enable Logging</div>
+                                    <div class="text-sm text-gray-600 dark:text-gray-400">Save detailed logs to file</div>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" id="loggingToggle" class="sr-only peer">
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                                </label>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <div class="font-medium">Developer Mode</div>
+                                    <div class="text-sm text-gray-600 dark:text-gray-400">Show advanced debug information</div>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" id="devModeToggle" class="sr-only peer">
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Actions -->
+                    <div class="glass-morphism rounded-lg p-6">
+                        <h3 class="text-lg font-semibold mb-4">Actions</h3>
+                        <div class="space-y-3">
+                            <button onclick="exportSettings()" class="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors">
+                                Export Settings
+                            </button>
+                            <button onclick="importSettings()" class="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors">
+                                Import Settings
+                            </button>
+                            <button onclick="resetSettings()" class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition-colors">
+                                Reset to Defaults
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Save Button -->
+        <div class="fixed bottom-0 right-0 p-6">
+            <button onclick="saveSettings()" class="px-6 py-3 bg-control-primary text-white rounded-lg hover:bg-blue-600 transition-colors shadow-lg">
+                Save Settings
+            </button>
+        </div>
+    </div>
+
+    <script>
+        let currentSettings = {};
+        let isListeningForHotkey = false;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', async () => {
+            await loadSettings();
+            setupEventListeners();
+        });
+
+        async function loadSettings() {
+            try {
+                currentSettings = await window.electronAPI.getSettings();
+                updateUI();
+            } catch (error) {
+                console.error('Failed to load settings:', error);
+            }
+        }
+
+        function updateUI() {
+            // Update theme
+            document.getElementById('themeSelect').value = currentSettings.theme || 'dark';
+            
+            // Update toggles
+            document.getElementById('floatingButtonToggle').checked = currentSettings.floatingButton?.enabled !== false;
+            document.getElementById('autoStartToggle').checked = currentSettings.autoStart !== false;
+            document.getElementById('soundToggle').checked = currentSettings.soundEnabled === true;
+            document.getElementById('notificationsToggle').checked = currentSettings.notificationsEnabled !== false;
+            
+            // Update hotkey display
+            document.getElementById('currentHotkey').textContent = currentSettings.hotkey || 'Ctrl+Shift+C';
+            
+            // Update account info
+            if (currentSettings.googleIdToken) {
+                showAuthenticatedState();
+            }
+            
+            // Update plan info
+            document.getElementById('currentPlan').textContent = currentSettings.plan || 'Free';
+            
+            // Update API key (masked)
+            if (currentSettings.geminiApiKey) {
+                const masked = currentSettings.geminiApiKey.substring(0, 8) + '...' + currentSettings.geminiApiKey.substring(currentSettings.geminiApiKey.length - 4);
+                document.getElementById('geminiApiKey').value = masked;
+            }
+        }
+
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.add('hidden');
+            });
+            
+            // Remove active class from all tab buttons
+            document.querySelectorAll('[id^="tab-"]').forEach(tab => {
+                tab.classList.remove('tab-active');
+                tab.classList.add('border-transparent');
+            });
+            
+            // Show selected tab
+            document.getElementById(`content-${tabName}`).classList.remove('hidden');
+            
+            // Add active class to selected tab button
+            const activeTab = document.getElementById(`tab-${tabName}`);
+            activeTab.classList.add('tab-active');
+            activeTab.classList.remove('border-transparent');
+        }
+
+        function setupEventListeners() {
+            // Theme change
+            document.getElementById('themeSelect').addEventListener('change', (e) => {
+                document.body.className = document.body.className.replace(/light|dark/, e.target.value);
+            });
+        }
+
+        async function saveSettings() {
+            try {
+                // Collect settings from form
+                const newSettings = {
+                    theme: document.getElementById('themeSelect').value,
+                    floatingButton: {
+                        ...currentSettings.floatingButton,
+                        enabled: document.getElementById('floatingButtonToggle').checked
+                    },
+                    autoStart: document.getElementById('autoStartToggle').checked,
+                    soundEnabled: document.getElementById('soundToggle').checked,
+                    notificationsEnabled: document.getElementById('notificationsToggle').checked
+                };
+                
+                // Update API key if changed (not masked)
+                const apiKeyInput = document.getElementById('geminiApiKey').value;
+                if (apiKeyInput && !apiKeyInput.includes('...')) {
+                    newSettings.geminiApiKey = apiKeyInput;
+                }
+                
+                // Merge with current settings
+                const updatedSettings = { ...currentSettings, ...newSettings };
+                
+                // Save to electron store
+                await window.electronAPI.saveSettings(updatedSettings);
+                
+                currentSettings = updatedSettings;
+                
+                // Show success message
+                showNotification('Settings saved successfully!', 'success');
+                
+            } catch (error) {
+                console.error('Failed to save settings:', error);
+                showNotification('Failed to save settings: ' + error.message, 'error');
+            }
+        }
+
+        function changeHotkey() {
+            const button = event.target;
+            const hotkeyDisplay = document.getElementById('currentHotkey');
+            
+            if (isListeningForHotkey) {
+                // Cancel listening
+                isListeningForHotkey = false;
+                button.textContent = 'Change';
+                hotkeyDisplay.textContent = currentSettings.hotkey || 'Ctrl+Shift+C';
+                return;
+            }
+            
+            isListeningForHotkey = true;
+            button.textContent = 'Cancel';
+            hotkeyDisplay.textContent = 'Press keys...';
+            
+            const keyHandler = (e) => {
+                e.preventDefault();
+                
+                const modifiers = [];
+                if (e.ctrlKey) modifiers.push('Ctrl');
+                if (e.altKey) modifiers.push('Alt');
+                if (e.shiftKey) modifiers.push('Shift');
+                if (e.metaKey) modifiers.push('Meta');
+                
+                if (modifiers.length === 0 || !e.key || ['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) {
+                    return; // Require at least one modifier + a key
+                }
+                
+                const newHotkey = [...modifiers, e.key].join('+');
+                hotkeyDisplay.textContent = newHotkey;
+                
+                // Save the new hotkey
+                currentSettings.hotkey = newHotkey;
+                
+                // Clean up
+                isListeningForHotkey = false;
+                button.textContent = 'Change';
+                document.removeEventListener('keydown', keyHandler);
+            };
+            
+            document.addEventListener('keydown', keyHandler);
+        }
+
+        async function showAuthenticatedState() {
+            document.getElementById('signInButton').classList.add('hidden');
+            document.getElementById('userInfo').classList.remove('hidden');
+            // In a real app, you'd decode the token and show user info
+            document.getElementById('userName').textContent = 'Authenticated User';
+            document.getElementById('userEmail').textContent = 'user@example.com';
+        }
+
+        async function signOut() {
+            try {
+                // Clear the token
+                currentSettings.googleIdToken = null;
+                await window.electronAPI.saveSettings(currentSettings);
+                
+                // Update UI
+                document.getElementById('signInButton').classList.remove('hidden');
+                document.getElementById('userInfo').classList.add('hidden');
+                
+                showNotification('Signed out successfully', 'success');
+            } catch (error) {
+                showNotification('Failed to sign out: ' + error.message, 'error');
+            }
+        }
+
+        function upgradePlan() {
+            showNotification('Upgrade feature coming soon!', 'info');
+        }
+
+        function exportSettings() {
+            const dataStr = JSON.stringify(currentSettings, null, 2);
+            const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+            
+            const exportFileDefaultName = 'control-settings.json';
+            
+            const linkElement = document.createElement('a');
+            linkElement.setAttribute('href', dataUri);
+            linkElement.setAttribute('download', exportFileDefaultName);
+            linkElement.click();
+            
+            showNotification('Settings exported successfully', 'success');
+        }
+
+        function importSettings() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            
+            input.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                
+                try {
+                    const text = await file.text();
+                    const importedSettings = JSON.parse(text);
+                    
+                    // Validate and merge settings
+                    const validSettings = validateSettings(importedSettings);
+                    currentSettings = { ...currentSettings, ...validSettings };
+                    
+                    await window.electronAPI.saveSettings(currentSettings);
+                    updateUI();
+                    
+                    showNotification('Settings imported successfully', 'success');
+                } catch (error) {
+                    showNotification('Failed to import settings: ' + error.message, 'error');
+                }
+            };
+            
+            input.click();
+        }
+
+        function validateSettings(settings) {
+            // Validate and sanitize imported settings
+            const valid = {};
+            
+            if (settings.theme && ['light', 'dark', 'super'].includes(settings.theme)) {
+                valid.theme = settings.theme;
+            }
+            
+            if (settings.hotkey && typeof settings.hotkey === 'string') {
+                valid.hotkey = settings.hotkey;
+            }
+            
+            if (typeof settings.autoStart === 'boolean') {
+                valid.autoStart = settings.autoStart;
+            }
+            
+            // Add more validation as needed
+            return valid;
+        }
+
+        async function resetSettings() {
+            if (!confirm('Are you sure you want to reset all settings to defaults? This cannot be undone.')) {
+                return;
+            }
+            
+            try {
+                // Reset to defaults
+                const defaults = {
+                    theme: 'dark',
+                    hotkey: 'Ctrl+Shift+C',
+                    autoStart: true,
+                    floatingButton: { enabled: true },
+                    soundEnabled: false,
+                    notificationsEnabled: true
+                };
+                
+                currentSettings = defaults;
+                await window.electronAPI.saveSettings(currentSettings);
+                updateUI();
+                
+                showNotification('Settings reset to defaults', 'success');
+            } catch (error) {
+                showNotification('Failed to reset settings: ' + error.message, 'error');
+            }
+        }
+
+        function closeSettings() {
+            if (window.electronAPI) {
+                window.electronAPI.closeWindow('settings');
+            }
+        }
+
+        function showNotification(message, type = 'info') {
+            const notification = document.createElement('div');
+            notification.className = `fixed top-4 right-4 p-4 rounded-lg shadow-lg z-50 ${
+                type === 'success' ? 'bg-green-500' : 
+                type === 'error' ? 'bg-red-500' : 
+                'bg-blue-500'
+            } text-white transform transition-all duration-300 translate-x-full`;
+            notification.textContent = message;
+            
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.classList.remove('translate-x-full');
+            }, 100);
+            
+            setTimeout(() => {
+                notification.classList.add('translate-x-full');
+                setTimeout(() => {
+                    document.body.removeChild(notification);
+                }, 300);
+            }, 3000);
+        }
+    </script>
+</body>
+</html>

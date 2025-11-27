@@ -302,7 +302,7 @@ Analyze and respond in the appropriate JSON format (question or action type)."""
             elif response_type == 'action':
                 print("[LLM] Processing as ACTION SEQUENCE\n")
                 logger.info("[LLM] Processing as action sequence")
-                return await self.execute_action_sequence(ai_response)
+                return await self.execute_action_sequence_with_loop(ai_response)
             
             else:
                 raise ValueError(f"Unknown response type: {response_type}")
@@ -497,6 +497,154 @@ Analyze and respond in the appropriate JSON format (question or action type)."""
             print(f"[SCREENSHOT] ERROR: {e}\n")
             logger.error(f"[SCREENSHOT] Error: {e}")
             return {'success': False, 'message': str(e)}
+
+    async def execute_action_sequence_with_loop(self, ai_response: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Enhanced action execution that continues performing tasks until the main goal is completed.
+        Implements a loop mechanism for consecutive task execution.
+        """
+        try:
+            steps = ai_response.get('steps', [])
+            response_message = ai_response.get('response', 'Executing your request...')
+            
+            print(f"[ACTION] Starting enhanced action sequence with {len(steps)} steps\n")
+            logger.info(f"[ACTION] Starting enhanced action sequence with {len(steps)} steps")
+            
+            if not steps:
+                print("[ACTION] ERROR: No action steps provided\n")
+                return {
+                    'type': 'error',
+                    'message': 'No action steps provided',
+                }
+            
+            execution_results = []
+            total_steps_executed = 0
+            max_iterations = 10  # Prevent infinite loops
+            iteration = 0
+            
+            while iteration < max_iterations:
+                iteration += 1
+                print(f"[ACTION] Iteration {iteration}: Executing {len(steps)} steps\n")
+                
+                # Execute current sequence
+                for i, step in enumerate(steps):
+                    action = step.get('action')
+                    description = step.get('description', f'Step {i+1}')
+                    parameters = step.get('parameters', {})
+                    timing = step.get('timing', 0.5)
+                    
+                    print(f"[ACTION] Step {i+1}/{len(steps)}: {description}")
+                    logger.info(f"[ACTION] Step {i+1}/{len(steps)}: {description}")
+                    
+                    result = await self.execute_single_action(action, parameters)
+                    execution_results.append({
+                        'step': total_steps_executed + i + 1,
+                        'description': description,
+                        'result': result
+                    })
+                    
+                    if not result.get('success'):
+                        print(f"[ACTION] ERROR: Action failed at step {i+1}: {result.get('message')}\n")
+                        logger.error(f"[ACTION] Action failed at step {i+1}")
+                        return {
+                            'type': 'error',
+                            'message': f"Failed at step {total_steps_executed + i + 1}: {result.get('message')}",
+                        }
+                    
+                    print(f"[ACTION] Step {i+1} SUCCESS: {result.get('message')}\n")
+                    
+                    if timing > 0:
+                        await asyncio.sleep(timing)
+                
+                total_steps_executed += len(steps)
+                
+                # Take a screenshot to see current state
+                screenshot_result = await self.take_screenshot()
+                if not screenshot_result.get('success'):
+                    print("[ACTION] WARNING: Failed to take screenshot\n")
+                
+                # Check if more actions are needed by asking the AI
+                print(f"[ACTION] Checking if more actions are needed...\n")
+                needs_more = await self.check_if_more_actions_needed(response_message, total_steps_executed)
+                
+                if not needs_more.get('needs_more_actions', False):
+                    print(f"[ACTION] Task completed successfully after {total_steps_executed} steps\n")
+                    logger.info(f"[ACTION] Task completed successfully after {total_steps_executed} steps")
+                    break
+                
+                # Get next action steps
+                next_steps = needs_more.get('next_steps', [])
+                if next_steps:
+                    steps = next_steps
+                    print(f"[ACTION] Continuing with {len(steps)} more steps\n")
+                else:
+                    print("[ACTION] No more steps provided, ending execution\n")
+                    break
+            
+            print(f"[ACTION] Enhanced execution completed: {total_steps_executed} total steps executed\n")
+            return {
+                'type': 'ai_response',
+                'content': f"{response_message}\n\nAll {total_steps_executed} actions completed successfully!",
+            }
+            
+        except Exception as e:
+            print(f"[ACTION] ERROR: Error in enhanced execution: {e}\n")
+            logger.error(f"[ACTION] Error in enhanced execution: {e}")
+            return {
+                'type': 'error',
+                'message': f"Enhanced execution failed: {str(e)}",
+            }
+
+    async def check_if_more_actions_needed(self, original_task: str, steps_completed: int) -> Dict[str, Any]:
+        """
+        Ask the AI if more actions are needed to complete the task
+        """
+        try:
+            if not self.gemini_client:
+                return {'needs_more_actions': False}
+            
+            check_prompt = f"""
+            Original task: {original_task}
+            Steps completed so far: {steps_completed}
+            
+            Based on the current state (after taking a screenshot), determine if more actions are needed to complete the task.
+            
+            Respond in JSON format:
+            {{
+                "needs_more_actions": true/false,
+                "reasoning": "Brief explanation of why more actions are needed or why the task is complete",
+                "next_steps": [
+                    {{
+                        "action": "action_type",
+                        "description": "What this step does",
+                        "parameters": {{}},
+                        "timing": 0.5
+                    }}
+                ] // Only include if needs_more_actions is true
+            }}
+            """
+            
+            response = self.gemini_client.generate_content(check_prompt)
+            response_text = response.text.strip()
+            
+            # Extract JSON from response
+            json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+            else:
+                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group()
+                else:
+                    return {'needs_more_actions': False}
+            
+            result = json.loads(json_str)
+            return result
+            
+        except Exception as e:
+            print(f"[CHECK] ERROR: Error checking if more actions needed: {e}\n")
+            logger.error(f"[CHECK] Error checking if more actions needed: {e}")
+            return {'needs_more_actions': False}
 
     def run(self):
         print("[START] Computer Use Agent started - waiting for messages...\n")
