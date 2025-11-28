@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Computer Use Agent - Python Backend
-Handles device control, screenshot capture, and AI communication
+Enhanced Computer Use Agent - Python Backend for Control AI
+Combines the enhanced capabilities of console_test_backend.py with the application's messaging interface
+Handles device control, screenshot capture, and AI communication with improved error handling and adaptive planning
 """
 
 import sys
@@ -10,6 +11,7 @@ import time
 import asyncio
 import logging
 import os
+import subprocess
 import re
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -44,14 +46,23 @@ def find_and_load_env():
 find_and_load_env()
 
 try:
-    import pyautogui
-    import keyboard
-    import mouse
+    GUI_AVAILABLE = False
+    
     import mss
-    import psutil
-    import pyperclip
+    try:
+        import pyperclip
+    except ImportError:
+        pyperclip = None
     from PIL import Image
     import google.generativeai as genai
+    
+    try:
+        import pyautogui
+        GUI_AVAILABLE = True
+    except ImportError:
+        pyautogui = None
+        GUI_AVAILABLE = False
+        
 except ImportError as e:
     print(f"[ERROR] Missing dependency: {e}", file=sys.stderr)
     print("[ERROR] Please run: pip install -r requirements.txt", file=sys.stderr)
@@ -59,110 +70,125 @@ except ImportError as e:
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(levelname)s - [CONTROL] - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
     ]
 )
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are Control, an advanced Computer Use Agent with the ability to both answer questions and perform actions on the user's device.
+SYSTEM_PROMPT = """You are Control, an intelligent AI assistant that can:
+1. ANSWER QUESTIONS: Respond to queries, provide information, explanations
+2. EXECUTE TASKS: Control computer - click, type, open apps, manipulate files
 
-**CRITICAL: You must respond in valid JSON format ONLY. No additional text before or after the JSON.**
+**DETERMINE REQUEST TYPE:**
+- QUESTION: "What is X?", "How do I?", "Explain", "Tell me about", "Why is", "Information requests"
+    → Respond naturally with information/explanation
+- TASK: "Open X", "Create Y", "Send message", "Move file", "Click button", "Action requests"
+    → Execute computer actions
 
-**Response Format:**
-
-For QUESTIONS (when user asks for information, explanation, advice):
+**FOR QUESTIONS - RESPOND WITH:**
 {
     "type": "question",
-    "response": "Your detailed answer here",
-    "action_log": "Processed user question"
+    "response": "Your detailed answer to the user",
+    "requires_action": false
 }
 
-For ACTIONS (when user wants you to perform tasks on their device):
+**FOR TASKS - RESPOND WITH:**
 {
-    "type": "action",
-    "response": "Brief description of what you're doing",
-    "action_log": "Planning execution",
-    "steps": [
+    "type": "task",
+    "analysis": "Brief analysis of current state and optimal approach",
+    "plan": "Concise step-by-step plan",
+    "actions": [
         {
-            "action": "screenshot|mouse_click|keyboard_type|terminal_command|wait",
-            "description": "What this step does",
-            "parameters": {},
-            "timing": 0.5
+            "step": 1,
+            "description": "Brief description",
+            "action": "screenshot|click|type|key_press|double_click|mouse_move|scroll|terminal|wait|focus_window",
+            "parameters": {}
         }
     ]
 }
 
-**Available Actions:**
+**TASK PRINCIPLES:**
+- System Tasks (OS level): Use terminal for opening apps, file operations, folder manipulation, system commands
+- Application Tasks: Simulate real user - click, type, shortcuts - ALWAYS ensure correct app window is in focus first
+- Always click text fields before typing to ensure focus
+- Use native app shortcuts when possible
+- Be concise and efficient - avoid unnecessary steps
+- If a method fails, try alternative approaches
 
-1. screenshot: Capture current screen state
-   {"action": "screenshot", "description": "Taking screenshot", "parameters": {}, "timing": 0.3}
+**ACTIONS:**
+1. screenshot - Capture screen. params: {}
+2. click - Single click. params: {"coordinates": [x, y]}
+3. double_click - Double click. params: {"coordinates": [x, y]}
+4. mouse_move - Move cursor. params: {"coordinates": [x, y]}
+5. scroll - Scroll wheel. params: {"coordinates": [x, y], "direction": "up|down", "amount": 3}
+6. type - Type text. params: {"text": "hello", "clear_first": false}
+7. key_press - Keys/shortcuts. params: {"keys": ["ctrl", "a"], "combo": true}
+8. terminal - OS command. params: {"command": "command"}
+9. wait - Pause. params: {"duration": 1}
+10. focus_window - Switch to app window. params: {"app_name": "Chrome", "method": "alt_tab|search"}
 
-2. mouse_click: Click at coordinates
-   {"action": "mouse_click", "description": "Clicking button", "parameters": {"x": 500, "y": 300, "button": "left", "clicks": 1}, "timing": 0.5}
+**RULES:**
+- First determine if request is a QUESTION or TASK
+- For questions: Provide natural, helpful response
+- For tasks: Use terminal for system operations, UI interaction for applications
+- System tasks: Use terminal commands (fastest, most reliable)
+- App interactions: ALWAYS screenshot first to see current state
+- Before app interaction: Check window focus, switch if needed using focus_window action
+- ALWAYS click text fields before typing
+- Use keyboard shortcuts for efficiency
+- If action fails: Try alternative method
+- Speed and precision are both important"""
 
-3. keyboard_type: Type text
-   {"action": "keyboard_type", "description": "Typing text", "parameters": {"text": "Hello", "interval": 0.01}, "timing": 0.5}
-
-4. keyboard_press: Press specific keys
-   {"action": "keyboard_press", "description": "Pressing keys", "parameters": {"keys": ["ctrl", "c"], "combination": true}, "timing": 0.5}
-
-5. terminal_command: Execute command
-   {"action": "terminal_command", "description": "Running command", "parameters": {"command": "dir"}, "timing": 1.0}
-
-6. wait: Pause execution
-   {"action": "wait", "description": "Waiting", "parameters": {"duration": 2.0}, "timing": 0}
-
-**Guidelines:**
-- Always start actions with a screenshot to see current state
-- Break complex tasks into sequential steps
-- Use appropriate timing between actions (0.3-1.0 seconds)
-- For questions, provide clear answers without action steps
-- Be precise with coordinates for mouse clicks
-"""
-
-
-class ComputerUseAgent:
+class EnhancedComputerUseAgent:
     def __init__(self):
         self.running = True
-        self.gemini_client = None
         self.screenshot_dir = project_root / "screenshots"
-        self.api_key = None
-        
         self.screenshot_dir.mkdir(exist_ok=True)
+        self.execution_history = []
         
-        pyautogui.FAILSAFE = True
-        pyautogui.PAUSE = 0.1
+        self.setup_gemini_api()
+        self.setup_computer_control()
         
-        self.initialize_ai()
-        
-        print("[INIT] Computer Use Agent initialized\n")
-        logger.info("[INIT] Computer Use Agent initialized")
+        print("[INIT] Enhanced Computer Use Agent initialized\n")
+        logger.info("Enhanced Computer Use Agent initialized")
 
-    def initialize_ai(self, api_key=None):
+    def setup_gemini_api(self):
+        api_key = os.getenv('GEMINI_FREE_KEY')
+        if not api_key:
+            print("[AI] WARNING: No Gemini API key found in environment\n")
+            logger.warning("No Gemini API key found in environment")
+            self.model = None
+            return
+
         try:
-            key = api_key or os.getenv('GEMINI_FREE_KEY')
-            if not key:
-                print("[AI] WARNING: No Gemini API key found in environment\n")
-                logger.warning("[AI] No Gemini API key found in environment")
-                return
-                
-            genai.configure(api_key=key)
-            self.gemini_client = genai.GenerativeModel(
-                'gemini-2.0-flash',
-                generation_config={
-                    'temperature': 0.7,
-                    'top_p': 0.8,
-                    'top_k': 40,
-                }
-            )
-            self.api_key = key
+            genai.configure(api_key=api_key)
+            self.model = genai.GenerativeModel('gemini-2.0-flash', 
+                                             system_instruction=SYSTEM_PROMPT)
+            self.api_key = api_key
             print("[AI] Gemini AI client initialized successfully\n")
-            logger.info("[AI] Gemini AI client initialized successfully")
+            logger.info("Gemini AI client initialized successfully")
         except Exception as e:
             print(f"[AI] ERROR: Failed to initialize AI client: {e}\n")
-            logger.error(f"[AI] Failed to initialize AI client: {e}")
+            logger.error(f"Failed to initialize AI client: {e}")
+            self.model = None
+
+    def setup_computer_control(self):
+        try:
+            if GUI_AVAILABLE and pyautogui:
+                pyautogui.FAILSAFE = True
+                pyautogui.PAUSE = 0.05
+                print("[CONTROL] GUI libraries ready\n")
+
+            try:
+                with mss.mss() as sct:
+                    monitors = sct.monitors
+                    print(f"[CONTROL] {len(monitors)-1} monitor(s) detected\n")
+            except Exception as e:
+                print(f"[CONTROL] WARNING: {e}\n")
+        except Exception as e:
+            print(f"[CONTROL] ERROR: {e}\n")
 
     async def check_internet(self) -> bool:
         try:
@@ -182,18 +208,204 @@ class ComputerUseAgent:
             return True
         except Exception as e:
             print(f"[AI] ERROR: API key validation failed: {e}\n")
-            logger.error(f"[AI] API key validation failed: {e}")
+            logger.error(f"API key validation failed: {e}")
             return False
+
+    def take_screenshot(self) -> str:
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"screenshot_{timestamp}.png"
+            filepath = self.screenshot_dir / filename
+
+            with mss.mss() as sct:
+                monitor = sct.monitors[1]  # Use primary monitor
+                sct_img = sct.grab(monitor)
+                img = Image.frombytes("RGB", sct_img.size, sct_img.rgb)
+                img.save(filepath)
+
+            logger.info(f"Screenshot saved: {filepath}")
+            return str(filepath)
+        
+        except Exception as e:
+            logger.error(f"Screenshot error: {e}")
+            return ""
+
+    def execute_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        result = {"success": False, "message": "", "action": action.get('action')}
+        
+        try:
+            action_type = action.get('action', '').lower()
+            params = action.get('parameters', {})
+
+            if action_type == 'screenshot':
+                filepath = self.take_screenshot()
+                result["success"] = bool(filepath)
+                result["message"] = filepath
+                print(f"[SCREENSHOT] Captured\n")
+
+            elif action_type == 'click':
+                if GUI_AVAILABLE and pyautogui:
+                    x, y = params.get('coordinates', [0, 0])
+                    pyautogui.click(x, y)
+                    result["success"] = True
+                    result["message"] = f"Clicked ({x}, {y})"
+                    print(f"[CLICK] ({x}, {y})\n")
+
+            elif action_type == 'double_click':
+                if GUI_AVAILABLE and pyautogui:
+                    x, y = params.get('coordinates', [0, 0])
+                    pyautogui.click(x, y, clicks=2)
+                    result["success"] = True
+                    result["message"] = f"Double-clicked ({x}, {y})"
+                    print(f"[DOUBLE_CLICK] ({x}, {y})\n")
+
+            elif action_type == 'mouse_move':
+                if GUI_AVAILABLE and pyautogui:
+                    x, y = params.get('coordinates', [0, 0])
+                    pyautogui.moveTo(x, y)
+                    result["success"] = True
+                    result["message"] = f"Moved to ({x}, {y})"
+                    print(f"[MOUSE_MOVE] ({x}, {y})\n")
+
+            elif action_type == 'scroll':
+                if GUI_AVAILABLE and pyautogui:
+                    x, y = params.get('coordinates', [500, 500])
+                    direction = params.get('direction', 'down')
+                    amount = params.get('amount', 3)
+                    scroll_amount = amount if direction == 'down' else -amount
+                    pyautogui.moveTo(x, y)
+                    pyautogui.scroll(scroll_amount)
+                    result["success"] = True
+                    result["message"] = f"Scrolled {direction} by {amount}"
+                    print(f"[SCROLL] {direction} x{amount}\n")
+
+            elif action_type == 'type':
+                if GUI_AVAILABLE and pyautogui:
+                    text = params.get('text', '')
+                    clear_first = params.get('clear_first', False)
+                    if clear_first:
+                        pyautogui.hotkey('ctrl', 'a')
+                        time.sleep(0.1)
+                    pyautogui.write(text)
+                    result["success"] = True
+                    result["message"] = f"Typed: {text[:30]}"
+                    print(f"[TYPE] {text[:30]}\n")
+
+            elif action_type == 'key_press':
+                if GUI_AVAILABLE and pyautogui:
+                    keys = params.get('keys', [])
+                    combo = params.get('combo', len(keys) > 1)
+                    if combo and len(keys) > 1:
+                        pyautogui.hotkey(*keys)
+                    else:
+                        for key in keys:
+                            pyautogui.press(key)
+                    result["success"] = True
+                    result["message"] = f"Keys: {'+'.join(keys)}"
+                    print(f"[KEY_PRESS] {'+'.join(keys)}\n")
+
+            elif action_type == 'terminal':
+                command = params.get('command', '')
+                try:
+                    output = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=10)
+                    result["success"] = output.returncode == 0
+                    result["message"] = output.stdout[:200] if output.stdout else output.stderr[:200]
+                    print(f"[TERMINAL] {command}\n")
+                except Exception as e:
+                    result["message"] = str(e)
+
+            elif action_type == 'wait':
+                duration = params.get('duration', 1)
+                time.sleep(duration)
+                result["success"] = True
+                result["message"] = f"Waited {duration}s"
+                print(f"[WAIT] {duration}s\n")
+
+            elif action_type == 'focus_window':
+                if GUI_AVAILABLE and pyautogui:
+                    app_name = params.get('app_name', '')
+                    method = params.get('method', 'alt_tab')
+
+                    if method == 'alt_tab':
+                        pyautogui.hotkey('alt', 'tab')
+                        result["success"] = True
+                        result["message"] = f"Alt+Tab to switch window"
+                        print(f"[FOCUS_WINDOW] Alt+Tab\n")
+                    elif method == 'search':
+                        pyautogui.hotkey('win')
+                        time.sleep(0.3)
+                        pyautogui.write(app_name)
+                        time.sleep(0.5)
+                        pyautogui.press('enter')
+                        result["success"] = True
+                        result["message"] = f"Opened/focused {app_name}"
+                        print(f"[FOCUS_WINDOW] Searching for {app_name}\n")
+                    else:
+                        result["message"] = f"Unknown focus method: {method}"
+
+            else:
+                result["message"] = f"Unknown action: {action_type}"
+
+        except Exception as e:
+            result["message"] = str(e)
+            print(f"[ERROR] {e}\n")
+            logger.error(f"Action error: {e}")
+
+        return result
+
+    def send_to_llm(self, prompt: str, screenshot_path: str = None, retry_info: str = None) -> Dict[str, Any]:
+        try:
+            if not self.model:
+                return {"status": "error", "actions": []}
+
+            print(f"[LLM] Processing...\n")
+
+            content_parts = [prompt]
+
+            if retry_info:
+                content_parts.insert(0, f"RETRY NOTICE: {retry_info}\nPlease revise your plan based on this feedback.")
+
+            if screenshot_path and os.path.exists(screenshot_path):
+                with open(screenshot_path, 'rb') as f:
+                    image_data = f.read()
+                content_parts.append({
+                    "mime_type": "image/png",
+                    "data": image_data
+                })
+
+            response = self.model.generate_content(content_parts)
+            response_text = response.text.strip()
+
+            json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+            else:
+                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group()
+                else:
+                    raise ValueError("No JSON found")
+
+            llm_response = json.loads(json_str)
+            action_count = len(llm_response.get('actions', []))
+            print(f"[LLM] Plan: {action_count} steps\n")
+            logger.info("LLM response received")
+            return llm_response
+        
+        except Exception as e:
+            print(f"[LLM] ERROR: {e}\n")
+            logger.error(f"LLM error: {e}")
+            return {"status": "error", "actions": []}
 
     async def process_message(self, message_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
             message_type = message_data.get('type')
             content = message_data.get('content', '')
             api_key = message_data.get('apiKey')
-            
+
             print(f"[MSG] Processing message type: {message_type}")
             logger.info(f"[MSG] Processing message type: {message_type}")
-            
+
             if not await self.check_internet():
                 print("[MSG] ERROR: No internet connection\n")
                 logger.error("[MSG] No internet connection")
@@ -201,18 +413,18 @@ class ComputerUseAgent:
                     'type': 'error',
                     'message': 'No internet connection available',
                 }
-            
+
             if message_type == 'update_api_key':
                 key = message_data.get('key')
                 print(f"[API] Validating API key...\n")
                 if key and await self.validate_api_key(key):
-                    self.initialize_ai(key)
+                    self.setup_gemini_api()
                     print("[API] API key updated successfully\n")
                     logger.info("[API] API key updated successfully")
                     return {'type': 'api_key_update', 'success': True}
                 print("[API] ERROR: Invalid API key\n")
                 return {'type': 'api_key_update', 'success': False, 'error': 'Invalid API key'}
-            
+
             if message_type == 'user_message':
                 if not self.api_key and not api_key:
                     print("[MSG] ERROR: No API key configured\n")
@@ -221,13 +433,13 @@ class ComputerUseAgent:
                         'type': 'error',
                         'message': 'Please configure your API key in settings',
                     }
-                
+
                 if api_key and api_key != self.api_key:
                     print(f"[MSG] New API key provided, validating...\n")
                     if await self.validate_api_key(api_key):
                         self.api_key = api_key
                         genai.configure(api_key=api_key)
-                        self.gemini_client = genai.GenerativeModel('gemini-2.0-flash')
+                        self.model = genai.GenerativeModel('gemini-2.0-flash', system_instruction=SYSTEM_PROMPT)
                         print("[MSG] API key updated\n")
                     else:
                         print("[MSG] ERROR: Invalid API key\n")
@@ -235,16 +447,28 @@ class ComputerUseAgent:
                             'type': 'error',
                             'message': 'Invalid Gemini API key',
                         }
-                
+
                 return await self.handle_user_message(content)
-            
+
             elif message_type == 'screenshot_request':
                 print("[MSG] Screenshot requested\n")
-                return await self.take_screenshot()
+                filepath = self.take_screenshot()
+                if filepath:
+                    return {
+                        'type': 'screenshot_result',
+                        'success': True,
+                        'path': filepath,
+                        'message': 'Screenshot captured'
+                    }
+                else:
+                    return {
+                        'type': 'error',
+                        'message': 'Failed to capture screenshot'
+                    }
             else:
                 print(f"[MSG] ERROR: Unknown message type: {message_type}\n")
                 return {'type': 'error', 'message': f'Unknown message type: {message_type}'}
-                
+
         except Exception as e:
             print(f"[MSG] ERROR: Error processing message: {e}\n")
             logger.error(f"[MSG] Error processing message: {e}")
@@ -252,7 +476,7 @@ class ComputerUseAgent:
 
     async def handle_user_message(self, message: str) -> Dict[str, Any]:
         try:
-            if not self.gemini_client:
+            if not self.model:
                 print("[LLM] ERROR: AI service not available\n")
                 logger.error("[LLM] AI service not available")
                 return {
@@ -262,58 +486,52 @@ class ComputerUseAgent:
 
             print(f"[LLM] Sending to Gemini: {message[:60]}...\n")
             logger.info(f"[LLM] Sending message to Gemini: {message[:50]}...")
-            
-            full_prompt = f"""{SYSTEM_PROMPT}
 
-**User Message:** {message}
+            # Create prompt for the enhanced backend
+            prompt = f"""User Request: {message}
 
-Analyze and respond in the appropriate JSON format (question or action type)."""
+Determine if this is a QUESTION or a TASK:
+- QUESTION: Information request, explanation, asking for knowledge
+- TASK: Action request, computer control needed, something to do on the system
 
-            response = self.gemini_client.generate_content(full_prompt)
-            response_text = response.text.strip()
+Respond with the appropriate JSON format:
+- For QUESTION: {{"type": "question", "response": "Your answer", "requires_action": false}}
+- For TASK: {{"type": "task", "analysis": "...", "plan": "...", "actions": [...]}}"""
+
+            # Take initial screenshot for context
+            screenshot_path = self.take_screenshot()
             
-            print("[LLM] Response received from Gemini\n")
-            logger.info("[LLM] Received response from Gemini")
-            
-            json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group()
-                else:
-                    raise ValueError("No valid JSON found in AI response")
-            
-            ai_response = json.loads(json_str)
-            response_type = ai_response.get('type')
-            
-            print(f"[LLM] Response type: {response_type}\n")
-            logger.info(f"[LLM] Response type: {response_type}")
-            
-            if response_type == 'question':
-                print("[LLM] Processing as QUESTION\n")
-                logger.info("[LLM] Processing as question")
+            initial_response = self.send_to_llm(prompt, screenshot_path)
+
+            if initial_response.get('status') == 'error':
+                print(f"[ERROR] Failed to process request\n")
+                return {
+                    'type': 'error',
+                    'message': 'Failed to process request with AI'
+                }
+
+            request_type = initial_response.get('type', 'unknown')
+
+            if request_type == 'question':
+                print(f"[TYPE] Question detected\n")
+                response = initial_response.get('response', '')
+                print(f"[ANSWER]\n{response}\n")
                 return {
                     'type': 'ai_response',
-                    'content': ai_response.get('response', ''),
+                    'content': response,
                 }
-                
-            elif response_type == 'action':
-                print("[LLM] Processing as ACTION SEQUENCE\n")
-                logger.info("[LLM] Processing as action sequence")
-                return await self.execute_action_sequence_with_loop(ai_response)
-            
+
+            elif request_type == 'task':
+                print(f"[TYPE] Task detected\n")
+                return await self.execute_task_with_enhanced_logic(message, initial_response, screenshot_path)
+
             else:
-                raise ValueError(f"Unknown response type: {response_type}")
-                
-        except json.JSONDecodeError as e:
-            print(f"[LLM] ERROR: JSON parsing error: {e}\n")
-            logger.error(f"[LLM] JSON parsing error: {e}")
-            return {
-                'type': 'error',
-                'message': "Failed to parse AI response",
-            }
+                print(f"[ERROR] Unknown request type: {request_type}\n")
+                return {
+                    'type': 'error',
+                    'message': f'Unknown request type: {request_type}'
+                }
+
         except Exception as e:
             print(f"[LLM] ERROR: Error handling user message: {e}\n")
             logger.error(f"[LLM] Error handling user message: {e}")
@@ -322,334 +540,141 @@ Analyze and respond in the appropriate JSON format (question or action type)."""
                 'message': str(e),
             }
 
-    async def execute_action_sequence(self, ai_response: Dict[str, Any]) -> Dict[str, Any]:
-        try:
-            steps = ai_response.get('steps', [])
-            response_message = ai_response.get('response', 'Executing your request...')
-            
-            print(f"[ACTION] Starting action sequence with {len(steps)} steps\n")
-            logger.info(f"[ACTION] Starting action sequence with {len(steps)} steps")
-            
-            if not steps:
-                print("[ACTION] ERROR: No action steps provided\n")
-                return {
-                    'type': 'error',
-                    'message': 'No action steps provided',
-                }
-            
-            execution_results = []
-            
-            for i, step in enumerate(steps):
-                action = step.get('action')
-                description = step.get('description', f'Step {i+1}')
-                parameters = step.get('parameters', {})
-                timing = step.get('timing', 0.5)
-                
-                print(f"[ACTION] Step {i+1}/{len(steps)}: {description}")
-                logger.info(f"[ACTION] Step {i+1}/{len(steps)}: {description}")
-                
-                result = await self.execute_single_action(action, parameters)
-                execution_results.append({
-                    'step': i + 1,
-                    'description': description,
-                    'result': result
-                })
-                
-                if not result.get('success'):
-                    print(f"[ACTION] ERROR: Action failed at step {i+1}: {result.get('message')}\n")
-                    logger.error(f"[ACTION] Action failed at step {i+1}")
-                    return {
-                        'type': 'error',
-                        'message': f"Failed at step {i+1}: {result.get('message')}",
-                    }
-                
-                print(f"[ACTION] Step {i+1} SUCCESS: {result.get('message')}\n")
-                
-                if timing > 0:
-                    await asyncio.sleep(timing)
-            
-            print(f"[ACTION] All {len(steps)} actions completed successfully\n")
-            logger.info("[ACTION] All actions completed successfully")
-            return {
-                'type': 'ai_response',
-                'content': f"{response_message}\n\nAll {len(steps)} actions completed successfully!",
-            }
-            
-        except Exception as e:
-            print(f"[ACTION] ERROR: Error executing sequence: {e}\n")
-            logger.error(f"[ACTION] Error executing sequence: {e}")
-            return {
-                'type': 'error',
-                'message': f"Execution failed: {str(e)}",
-            }
+    async def execute_task_with_enhanced_logic(self, task: str, llm_response: Dict[str, Any], initial_screenshot: str) -> Dict[str, Any]:
+        analysis = llm_response.get('analysis', '')
+        plan = llm_response.get('plan', '')
+        actions = llm_response.get('actions', [])
 
-    async def execute_single_action(self, action: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
-        try:
-            logger.info(f"[EXEC] Executing action: {action}")
-            
-            if action == 'screenshot':
-                return await self.take_screenshot()
-            
-            elif action == 'mouse_click':
-                x = parameters.get('x')
-                y = parameters.get('y')
-                button = parameters.get('button', 'left')
-                clicks = parameters.get('clicks', 1)
-                
-                if x is not None and y is not None:
-                    pyautogui.click(x, y, button=button, clicks=clicks)
-                    logger.info(f"[EXEC] Clicked at ({x}, {y})")
-                
-                return {'success': True, 'message': f'Clicked {button} button'}
-            
-            elif action == 'keyboard_type':
-                text = parameters.get('text', '')
-                interval = parameters.get('interval', 0.01)
-                
-                pyautogui.write(text, interval=interval)
-                logger.info(f"[EXEC] Typed: {text}")
-                
-                return {'success': True, 'message': f'Typed: "{text}"'}
-            
-            elif action == 'keyboard_press':
-                keys = parameters.get('keys', [])
-                combination = parameters.get('combination', False)
-                
-                if combination and len(keys) > 1:
-                    pyautogui.hotkey(*keys)
-                else:
-                    for key in keys:
-                        pyautogui.press(key)
-                
-                logger.info(f"[EXEC] Pressed keys: {keys}")
-                return {'success': True, 'message': f'Pressed: {", ".join(keys)}'}
-            
-            elif action == 'terminal_command':
-                command = parameters.get('command', '')
-                return await self.execute_terminal_command(command)
-            
-            elif action == 'wait':
-                duration = parameters.get('duration', 1.0)
-                await asyncio.sleep(duration)
-                logger.info(f"[EXEC] Waited {duration} seconds")
-                return {'success': True, 'message': f'Waited {duration} seconds'}
-            
+        print(f"[ANALYSIS] {analysis}\n")
+        print(f"[PLAN] {plan}\n")
+        print(f"[EXECUTING] {len(actions)} steps\n")
+
+        step_results = []
+        failed_steps = []
+        retry_count = 0
+        max_retries = 3
+
+        while retry_count < max_retries:
+            if retry_count == 0:
+                actions_to_execute = actions
+                step_results = []
+                failed_steps = []
             else:
-                return {'success': False, 'message': f'Unknown action: {action}'}
-                
-        except Exception as e:
-            print(f"[EXEC] ERROR: Error executing {action}: {e}\n")
-            logger.error(f"[EXEC] Error executing {action}: {e}")
-            return {'success': False, 'message': str(e)}
+                actions_to_execute = retry_actions
+                print(f"\n[RECOVERY ATTEMPT {retry_count}] Executing alternative plan...\n")
 
-    async def execute_terminal_command(self, command: str) -> Dict[str, Any]:
-        try:
-            print(f"[EXEC] Running command: {command}\n")
-            logger.info(f"[EXEC] Running command: {command}")
-            
-            process = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            
-            stdout, stderr = await process.communicate()
-            
-            stdout_str = stdout.decode() if stdout else ""
-            stderr_str = stderr.decode() if stderr else ""
-            
-            success = process.returncode == 0
-            logger.info(f"[EXEC] Command executed with exit code: {process.returncode}")
-            
-            return {
-                'success': success,
-                'message': f"Command executed with exit code {process.returncode}"
-            }
-            
-        except Exception as e:
-            print(f"[EXEC] ERROR: Terminal command error: {e}\n")
-            logger.error(f"[EXEC] Terminal command error: {e}")
-            return {'success': False, 'message': str(e)}
+            for i, action in enumerate(actions_to_execute, 1):
+                step_desc = action.get('description', f'Step {i}')
+                print(f"[{i}/{len(actions_to_execute)}] {step_desc}")
 
-    async def take_screenshot(self) -> Dict[str, Any]:
-        try:
-            timestamp = int(time.time())
-            screenshot_path = self.screenshot_dir / f"screenshot_{timestamp}.png"
-            
-            print(f"[SCREENSHOT] Capturing screen...\n")
-            logger.info(f"[SCREENSHOT] Capturing screen...")
-            
-            with mss.mss() as sct:
-                monitor = sct.monitors[1]
-                sct_img = sct.grab(monitor)
-                img = Image.frombytes('RGB', sct_img.size, sct_img.rgb)
-                img.save(screenshot_path)
-            
-            print(f"[SCREENSHOT] Saved to {screenshot_path}\n")
-            logger.info(f"[SCREENSHOT] Saved to {screenshot_path}")
-            return {
-                'success': True,
-                'path': str(screenshot_path),
-                'message': 'Screenshot captured'
-            }
-            
-        except Exception as e:
-            print(f"[SCREENSHOT] ERROR: {e}\n")
-            logger.error(f"[SCREENSHOT] Error: {e}")
-            return {'success': False, 'message': str(e)}
+                result = self.execute_action(action)
+                step_results.append(result)
 
-    async def execute_action_sequence_with_loop(self, ai_response: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Enhanced action execution that continues performing tasks until the main goal is completed.
-        Implements a loop mechanism for consecutive task execution.
-        """
-        try:
-            steps = ai_response.get('steps', [])
-            response_message = ai_response.get('response', 'Executing your request...')
-            
-            print(f"[ACTION] Starting enhanced action sequence with {len(steps)} steps\n")
-            logger.info(f"[ACTION] Starting enhanced action sequence with {len(steps)} steps")
-            
-            if not steps:
-                print("[ACTION] ERROR: No action steps provided\n")
-                return {
-                    'type': 'error',
-                    'message': 'No action steps provided',
-                }
-            
-            execution_results = []
-            total_steps_executed = 0
-            max_iterations = 10  # Prevent infinite loops
-            iteration = 0
-            
-            while iteration < max_iterations:
-                iteration += 1
-                print(f"[ACTION] Iteration {iteration}: Executing {len(steps)} steps\n")
-                
-                # Execute current sequence
-                for i, step in enumerate(steps):
-                    action = step.get('action')
-                    description = step.get('description', f'Step {i+1}')
-                    parameters = step.get('parameters', {})
-                    timing = step.get('timing', 0.5)
-                    
-                    print(f"[ACTION] Step {i+1}/{len(steps)}: {description}")
-                    logger.info(f"[ACTION] Step {i+1}/{len(steps)}: {description}")
-                    
-                    result = await self.execute_single_action(action, parameters)
-                    execution_results.append({
-                        'step': total_steps_executed + i + 1,
-                        'description': description,
-                        'result': result
+                if not result['success']:
+                    failed_steps.append({
+                        'step': i,
+                        'action': result['action'],
+                        'message': result['message']
                     })
-                    
-                    if not result.get('success'):
-                        print(f"[ACTION] ERROR: Action failed at step {i+1}: {result.get('message')}\n")
-                        logger.error(f"[ACTION] Action failed at step {i+1}")
-                        return {
-                            'type': 'error',
-                            'message': f"Failed at step {total_steps_executed + i + 1}: {result.get('message')}",
-                        }
-                    
-                    print(f"[ACTION] Step {i+1} SUCCESS: {result.get('message')}\n")
-                    
-                    if timing > 0:
-                        await asyncio.sleep(timing)
-                
-                total_steps_executed += len(steps)
-                
-                # Take a screenshot to see current state
-                screenshot_result = await self.take_screenshot()
-                if not screenshot_result.get('success'):
-                    print("[ACTION] WARNING: Failed to take screenshot\n")
-                
-                # Check if more actions are needed by asking the AI
-                print(f"[ACTION] Checking if more actions are needed...\n")
-                needs_more = await self.check_if_more_actions_needed(response_message, total_steps_executed)
-                
-                if not needs_more.get('needs_more_actions', False):
-                    print(f"[ACTION] Task completed successfully after {total_steps_executed} steps\n")
-                    logger.info(f"[ACTION] Task completed successfully after {total_steps_executed} steps")
-                    break
-                
-                # Get next action steps
-                next_steps = needs_more.get('next_steps', [])
-                if next_steps:
-                    steps = next_steps
-                    print(f"[ACTION] Continuing with {len(steps)} more steps\n")
+                    print(f"[FAIL] {result['message']}\n")
                 else:
-                    print("[ACTION] No more steps provided, ending execution\n")
+                    print(f"[OK]\n")
+
+                time.sleep(0.2)
+
+            if not failed_steps:
+                print(f"\n[SUCCESS] All steps completed successfully!\n")
+                break
+
+            if retry_count < max_retries - 1:
+                print(f"\n{'='*80}")
+                print(f" FAILURE RECOVERY - ATTEMPT {retry_count + 1}")
+                print(f"{'='*80}\n")
+                print(f"[RECOVERY] {len(failed_steps)} step(s) failed. Trying alternative approach...\n")
+
+                retry_screenshot = self.take_screenshot()
+                retry_info = f"Previous plan failed at steps: {[f['step'] for f in failed_steps]}. Errors: {json.dumps(failed_steps)}"
+
+                retry_prompt = f"""Task: {task}
+
+Previous execution had failures. Analyze current screen and create a COMPLETELY DIFFERENT plan.
+Failed steps details:
+{json.dumps(failed_steps, indent=2)}
+
+Try a completely different approach:
+- If you used UI before, try terminal
+- If you used terminal, try UI
+- Change the method/tool used
+- Be more precise with coordinates (calculate perfectly because a wrong coordinate means a wrong click, note you are using pyautogui for the mouse control so understand how it works)
+- Check app window focus before interacting
+
+Create a better plan that avoids these failures using alternative methods.
+Respond ONLY with JSON for a TASK (type: "task")."""
+
+                retry_response = self.send_to_llm(retry_prompt, retry_screenshot, retry_info)
+
+                if retry_response.get('status') != 'error' and retry_response.get('type') == 'task':
+                    retry_actions = retry_response.get('actions', [])
+                    print(f"[RECOVERY] Alternative plan: {len(retry_actions)} steps\n")
+                    retry_count += 1
+                    continue
+                else:
+                    print(f"[ERROR] Could not generate recovery plan\n")
                     break
-            
-            print(f"[ACTION] Enhanced execution completed: {total_steps_executed} total steps executed\n")
+            else:
+                print(f"\n[ERROR] Max retry attempts ({max_retries}) reached. Task may not be completable.\n")
+                break
+
+        # Final verification
+        final_screenshot = self.take_screenshot()
+        
+        completion_prompt = f"""Task was: {task}
+
+Analyze final screenshot and confirm:
+1. Was task completed successfully?
+2. Current system state?
+3. Any issues?
+
+Respond ONLY with JSON:
+{{
+    "type": "question",
+    "response": "Your assessment (this is just for verification)",
+    "completed": true/false,
+    "state": "Your assessment",
+    "status": "success/partial/failed"
+}}"""
+
+        verification = self.send_to_llm(completion_prompt, final_screenshot)
+
+        print(f"[COMPLETION] Completed: {verification.get('completed', False)}")
+        print(f"[STATE] {verification.get('state', 'Unknown')}\n")
+
+        print(f"\n{'='*80}")
+        print(f" SUMMARY")
+        print(f"{'='*80}")
+        print(f"Total Actions: {len(step_results)}")
+        print(f"Successful: {sum(1 for r in step_results if r['success'])}")
+        print(f"Failed: {sum(1 for r in step_results if not r['success'])}")
+        print(f"Retry Attempts: {retry_count}")
+        print(f"Status: {verification.get('status', 'unknown')}")
+        print(f"{'='*80}\n")
+
+        # Return result in the format expected by the application
+        if verification.get('completed', False):
             return {
                 'type': 'ai_response',
-                'content': f"{response_message}\n\nAll {total_steps_executed} actions completed successfully!",
+                'content': f"Task completed successfully!\n\n{analysis}\n\n{plan}",
             }
-            
-        except Exception as e:
-            print(f"[ACTION] ERROR: Error in enhanced execution: {e}\n")
-            logger.error(f"[ACTION] Error in enhanced execution: {e}")
+        else:
             return {
                 'type': 'error',
-                'message': f"Enhanced execution failed: {str(e)}",
+                'message': f"Task could not be completed. Status: {verification.get('status', 'unknown')}",
             }
-
-    async def check_if_more_actions_needed(self, original_task: str, steps_completed: int) -> Dict[str, Any]:
-        """
-        Ask the AI if more actions are needed to complete the task
-        """
-        try:
-            if not self.gemini_client:
-                return {'needs_more_actions': False}
-            
-            check_prompt = f"""
-            Original task: {original_task}
-            Steps completed so far: {steps_completed}
-            
-            Based on the current state (after taking a screenshot), determine if more actions are needed to complete the task.
-            
-            Respond in JSON format:
-            {{
-                "needs_more_actions": true/false,
-                "reasoning": "Brief explanation of why more actions are needed or why the task is complete",
-                "next_steps": [
-                    {{
-                        "action": "action_type",
-                        "description": "What this step does",
-                        "parameters": {{}},
-                        "timing": 0.5
-                    }}
-                ] // Only include if needs_more_actions is true
-            }}
-            """
-            
-            response = self.gemini_client.generate_content(check_prompt)
-            response_text = response.text.strip()
-            
-            # Extract JSON from response
-            json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group()
-                else:
-                    return {'needs_more_actions': False}
-            
-            result = json.loads(json_str)
-            return result
-            
-        except Exception as e:
-            print(f"[CHECK] ERROR: Error checking if more actions needed: {e}\n")
-            logger.error(f"[CHECK] Error checking if more actions needed: {e}")
-            return {'needs_more_actions': False}
 
     def run(self):
-        print("[START] Computer Use Agent started - waiting for messages...\n")
-        logger.info("[START] Computer Use Agent started")
-        
+        print("[START] Enhanced Computer Use Agent started - waiting for messages...\n")
+        logger.info("[START] Enhanced Computer Use Agent started")
+
         try:
             while self.running:
                 try:
@@ -657,16 +682,16 @@ Analyze and respond in the appropriate JSON format (question or action type)."""
                     if line:
                         print(f"[INPUT] Received: {line[:80]}...\n")
                         logger.info(f"[INPUT] Received message")
-                        
+
                         message_data = json.loads(line)
                         result = asyncio.run(self.process_message(message_data))
-                        
+
                         print(f"[OUTPUT] Sending response\n")
                         logger.info("[OUTPUT] Sending response")
-                        
+
                         print(json.dumps(result))
                         sys.stdout.flush()
-                        
+
                 except EOFError:
                     print("[STOP] EOF received\n")
                     break
@@ -680,7 +705,7 @@ Analyze and respond in the appropriate JSON format (question or action type)."""
                     logger.error(f"[LOOP] Error: {e}")
                     print(json.dumps({'type': 'error', 'message': str(e)}))
                     sys.stdout.flush()
-                    
+
         except KeyboardInterrupt:
             print("\n[STOP] Shutting down...\n")
             logger.info("[STOP] Shutting down...")
@@ -688,5 +713,5 @@ Analyze and respond in the appropriate JSON format (question or action type)."""
             self.running = False
 
 if __name__ == "__main__":
-    agent = ComputerUseAgent()
+    agent = EnhancedComputerUseAgent()
     agent.run()

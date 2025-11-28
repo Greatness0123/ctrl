@@ -204,11 +204,13 @@ class ControlApp {
             height: 600,
             show: false,
             frame: true,
+            titleBarStyle: 'hidden',
             alwaysOnTop: false,
             skipTaskbar: false,
             resizable: false,
             center: true,
             webSecurity: false,
+            icon: path.join(__dirname, '../renderer/icon-removebg-preview.png'),
             webPreferences: {
                 nodeIntegration: false,
                 contextIsolation: true,
@@ -263,6 +265,7 @@ class ControlApp {
             movable: false,
             transparent: true,
             hasShadow: false,
+            icon: path.join(__dirname, '../renderer/icon-removebg-preview.png'),
             webPreferences: {
                 nodeIntegration: false,
                 contextIsolation: true,
@@ -362,6 +365,7 @@ class ControlApp {
             movable: false,
             transparent: true,
             hasShadow: false,
+            icon: path.join(__dirname, '../renderer/icon-removebg-preview.png'),
             webPreferences: {
                 nodeIntegration: false,
                 contextIsolation: true,
